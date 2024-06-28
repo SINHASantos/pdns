@@ -14,6 +14,7 @@ AM_CPPFLAGS += \
 	-I$(top_srcdir)/ext/protozero/include \
 	-I$(top_srcdir)/settings \
 	-I$(top_builddir)/settings \
+	-I$(top_srcdir)/settings/rust/src \
 	$(YAHTTP_CFLAGS) \
 	$(LIBCRYPTO_INCLUDES) \
 	-DBOOST_CONTAINER_USE_STD_EXCEPTIONS
@@ -41,7 +42,7 @@ BUILT_SOURCES=htmlfiles.h \
 	dnslabeltext.cc
 
 CLEANFILES = htmlfiles.h \
-	recursor.conf-dist recursor.yml-dist
+	recursor.yml-dist
 
 htmlfiles.h: incfiles ${srcdir}/html/* ${srcdir}/html/js/*
 	$(AM_V_GEN)$(srcdir)/incfiles > $@.tmp
@@ -168,6 +169,7 @@ pdns_recursor_SOURCES = \
 	pubsuffixloader.cc \
 	qtype.hh qtype.cc \
 	query-local-address.hh query-local-address.cc \
+	ratelimitedlog.hh \
 	rcpgenerator.cc rcpgenerator.hh \
 	rec-carbon.cc \
 	rec-eventtrace.cc rec-eventtrace.hh \
@@ -306,6 +308,7 @@ testrunner_SOURCES = \
 	pollmplexer.cc \
 	qtype.cc qtype.hh \
 	query-local-address.hh query-local-address.cc \
+	ratelimitedlog.hh \
 	rcpgenerator.cc \
 	rec-eventtrace.cc rec-eventtrace.hh \
 	rec-responsestats.hh rec-responsestats.cc \
@@ -323,6 +326,7 @@ testrunner_SOURCES = \
 	settings/cxxsupport.cc \
 	sholder.hh \
 	sillyrecords.cc \
+	sortlist.cc sortlist.hh \
 	sstuff.hh \
 	stable-bloom.hh \
 	svc-records.cc svc-records.hh \
@@ -444,6 +448,7 @@ endif
 
 if LUA
 pdns_recursor_LDADD += $(LUA_LIBS)
+rec_control_LDADD += $(LUA_LIBS)
 testrunner_LDADD += $(LUA_LIBS)
 endif
 
@@ -505,17 +510,30 @@ endif
 
 rec_control_SOURCES = \
 	arguments.cc arguments.hh \
+	base32.cc base32.hh \
 	base64.cc base64.hh \
 	credentials.cc credentials.hh \
 	dnslabeltext.cc \
 	dnsname.hh dnsname.cc \
+	dnsparser.cc dnsparser.hh \
+	dnsrecords.cc dnsrecords.hh \
+	dnswriter.cc dnswriter.hh \
+	filterpo.cc filterpo.hh \
+	iputils.cc iputils.hh \
 	logger.cc \
 	logging.cc \
+	lua-base4.cc lua-base4.hh \
 	misc.cc \
+	nsecrecords.cc \
 	qtype.cc \
+	rcpgenerator.cc	rcpgenerator.hh \
+	rec-lua-conf.cc rec-lua-conf.hh \
 	rec_channel.cc rec_channel.hh \
 	rec_control.cc \
 	settings/cxxsupport.cc \
+	sillyrecords.cc \
+	sortlist.cc sortlist.hh \
+	svc-records.cc svc-records.hh \
 	unix_utility.cc
 
 nodist_rec_control_SOURCES = \
@@ -534,10 +552,7 @@ pubsuffix.cc: $(srcdir)/effective_tld_names.dat
 	$(srcdir)/mkpubsuffixcc $< $@
 
 ## Config file
-sysconf_DATA = recursor.conf-dist recursor.yml-dist
-
-recursor.conf-dist: pdns_recursor
-	$(AM_V_GEN)./pdns_recursor --config=default > $@
+sysconf_DATA = recursor.yml-dist
 
 recursor.yml-dist: pdns_recursor
 	dir=$$(mktemp -d) && touch "$$dir/recursor.yml" && ./pdns_recursor --config-dir="$$dir" --config=default 2> /dev/null > $@ && rm "$$dir/recursor.yml" && rmdir "$$dir"

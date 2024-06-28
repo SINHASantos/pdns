@@ -871,7 +871,7 @@ Lower this if you experience timeouts.
 List of netmasks (proxy IP in case of proxy-protocol presence, client IP otherwise) for which EDNS padding will be enabled in responses, provided that :ref:`setting-edns-padding-mode` applies.
  ''',
         'versionadded' : '4.5.0',
-        'versionchanged' : ('5.0.4', 'YAML settings only: previously this was defined as a string instead of a sequence')
+        'versionchanged' : ('5.0.5', 'YAML settings only: previously this was defined as a string instead of a sequence')
     },
     {
         'name' : 'edns_padding_mode',
@@ -1107,7 +1107,7 @@ The DNSSEC notes from :ref:`setting-forward-zones` apply here as well.
     forwarders:
     - 127.0.0.1
     - 127.0.0.1:5353
-    - '[::1]53'
+    - '[::1]:53'
   - zone: example2.com
     forwarders:
     - ::1
@@ -1452,6 +1452,21 @@ and also smaller than `max-mthreads`.
     'versionadded': '4.3.0'
     },
     {
+        'name': 'max_chain_length',
+        'section': 'recursor',
+        'type': LType.Uint64,
+        'default': '0',
+        'help': 'maximum number of queries that can be chained to an outgoing request, 0 is no limit',
+        'doc': '''
+The maximum number of queries that can be attached to an outgoing request chain. Attaching requests to a chain
+saves on outgoing queries, but the processing of a chain when the reply to the outgoing query comes in
+might result in a large outgoing traffic spike. Reducing the maximum chain length mitigates this.
+If this value is zero, no maximum is enforced, though the maximum number of mthreads (:ref:`setting-max-mthreads`)
+also limits the chain length.
+''',
+        'versionadded': '5.1.0'
+    },
+    {
         'name' : 'max_include_depth',
         'section' : 'recursor',
         'type' : LType.Uint64,
@@ -1484,7 +1499,7 @@ means unlimited.
         'default' : '2048',
         'help' : 'Maximum number of simultaneous Mtasker threads',
         'doc' : '''
-Maximum number of simultaneous MTasker threads.
+Maximum number of simultaneous MTasker threads, per worker thread.
  ''',
     },
     {
@@ -1510,6 +1525,18 @@ This is used to avoid cycles resolving names.
  ''',
         'versionchanged': ('5.1.0', 'The default used to be 60, with an extra allowance if qname minimization was enabled. Having better algorithms allows for a lower default limit.'),
     },
+    {
+        'name' : 'max_cnames_followed',
+        'section' : 'recursor',
+        'type' : LType.Uint64,
+        'default' : '10',
+        'help' : 'Maximum number CNAME records followed',
+        'doc' : '''
+Maximum length of a CNAME chain. If a CNAME chain exceeds this length, a ``ServFail`` answer will be returned.
+Previously, this limit was fixed at 10.
+ ''',
+    'versionadded': '5.1.0'
+    },    
     {
         'name' : 'max_ns_address_qperq',
         'section' : 'outgoing',
@@ -1688,9 +1715,9 @@ recursor log file. The log line looks something like::
 If a domain is specified, then each time a newly observed domain is
 detected, the recursor will perform an A record lookup of '<newly
 observed domain>.<lookup domain>'. For example if 'new-domain-lookup'
-is configured as 'nod.powerdns.com', and a new domain 'xyz123.tv' is
+is configured as 'nod.powerdns.com', and a new domain 'example.com' is
 detected, then an A record lookup will be made for
-'xyz123.tv.nod.powerdns.com'. This feature gives a way to share the
+'example.com.nod.powerdns.com'. This feature gives a way to share the
 newly observed domain with partners, vendors or security teams. The
 result of the DNS lookup will be ignored by the recursor.
  ''',
@@ -1749,7 +1776,7 @@ from this directory.
 Interval (in seconds) to write the NOD and UDR DB snapshots.
 Set to zero to disable snapshot writing.',
  ''',
-        'versionadded': '5.1.0'
+    'versionadded': '5.1.0'
     },
     {
         'name' : 'whitelist',
@@ -1773,12 +1800,26 @@ Set to zero to disable snapshot writing.',
         'doc' : '''
 This setting is a list of all domains (and implicitly all subdomains)
 that will never be considered a new domain. For example, if the domain
-'xyz123.tv' is in the list, then 'foo.bar.xyz123.tv' will never be
+'example.com' is in the list, then 'foo.bar.example.com' will never be
 considered a new domain. One use-case for the ignore list is to never
 reveal details of internal subdomains via the new-domain-lookup
 feature.
  ''',
     'versionadded': '4.5.0'
+    },
+    {
+        'name' : 'ignore_list_file',
+        'section' : 'nod',
+        'type' : LType.String,
+        'oldname' : 'new-domain-ignore-list-file',
+        'default' : '',
+        'help' : 'File with a list of domains (and implicitly all subdomains) which will never be considered a new domain',
+        'doc' : '''
+Path to a file with a list of domains. File should have one domain per line,
+with no extra characters or comments.
+See :ref:`setting-new-domain-ignore-list`.
+ ''',
+    'versionadded': '5.1.0'
     },
     {
         'name' : 'pb_tag',
@@ -1801,6 +1842,7 @@ a new domain is observed.
         'help' : 'Wait this number of milliseconds for network i/o',
         'doc' : '''
 Number of milliseconds to wait for a remote authoritative server to respond.
+If the number of concurrent requests is high, the :program:Recursor uses a lower value.
  ''',
     },
     {
@@ -1941,7 +1983,7 @@ Maximum estimated NSEC3 cost for a given query to consider aggressive use of the
         'default' : '8',
         'help' : 'Maximum number of DS records to consider per zone',
         'doc' : '''
-Maximum number of DS records to consider when validating records inside a zone..
+Maximum number of DS records to consider when validating records inside a zone.
  ''',
         'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
     },
@@ -2062,7 +2104,7 @@ Note that once a Proxy Protocol header has been received, the source address fro
 The dnsdist docs have `more information about the PROXY protocol <https://dnsdist.org/advanced/passing-source-address.html#proxy-protocol>`_.
  ''',
         'versionadded' : '4.4.0',
-        'versionchanged' : ('5.0.4', 'YAML settings only: previously this was defined as a string instead of a sequence')
+        'versionchanged' : ('5.0.5', 'YAML settings only: previously this was defined as a string instead of a sequence')
     },
     {
         'name' : 'proxy_protocol_exceptions',
@@ -2144,6 +2186,10 @@ This value has precedence over :ref:`setting-qname-max-minimize-count`.
         'default' : '0.0.0.0',
         'help' : 'Source IP address for sending queries',
         'doc' : '''
+.. note::
+    While subnets and their negations are syntactically accepted, the handling of subnets has not been implemented yet.
+    Only individual IP addresses can be listed.
+
 Send out local queries from this address, or addresses. By adding multiple
 addresses, increased spoofing resilience is achieved. When no address of a certain
 address family is configured, there are *no* queries sent with that address family.
@@ -2969,6 +3015,33 @@ a unique DNS response is observed.
     'versionadded': '4.2.0'
     },
     {
+        'name' : 'unique_response_ignore_list',
+        'section' : 'nod',
+        'type' : LType.ListStrings,
+        'default' : '',
+        'help' : 'List of domains (and implicitly all subdomains) which will never be considered for UDR',
+        'doc' : '''
+This setting is a list of all domains (and implicitly all subdomains)
+that will never be considered for new unique domain responses.
+For example, if the domain 'example.com' is in the list, then 'foo.bar.example.com'
+will never be considered for a new unique domain response.
+''',
+        'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'unique_response_ignore_list_file',
+        'section' : 'nod',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'File with list of domains (and implicitly all subdomains) which will never be considered for UDR',
+        'doc' : '''
+Path to a file with a list of domains. File should have one domain per line,
+with no extra characters or comments.
+See :ref:`setting-unique-response-ignore-list`.
+''',
+        'versionadded': '5.1.0'
+    },
+    {
         'name' : 'use_incoming_edns_subnet',
         'section' : 'incoming',
         'type' : LType.Bool,
@@ -3187,6 +3260,197 @@ If set to zero (the default), the value :ref:`setting-system-resolver-ttl` is us
 Warn on potential self-resolve.
 If this check draws the wrong conclusion, you can disable it.
 ''',
-    'versionadded': '5.1.0'
+        'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'trustanchors',
+        'section' : 'dnssec',
+        'type' : LType.ListTrustAnchors,
+        'default' : '[{name: ., dsrecords: [\'20326 8 2 e06d44b80b8f1d39a95c0b0d7c65d08458e880409bbc683457104237c7f8ec8d\']}]',
+        'docdefault' : '''
+
+.. code-block:: yaml
+
+   - name: .
+     dsrecords:
+     - 20326 8 2 e06d44b80b8f1d39a95c0b0d7c65d08458e880409bbc683457104237c7f8ec8d
+
+''',
+        'help' : 'Sequence of trust anchors',
+        'doc' : '''
+Sequence of trust anchors. If the sequence contains an entry for the root zone, the default root zone trust anchor is not included.
+If a zone appears multiple times, the entries in ``dsrecords`` are merged.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'negative_trustanchors',
+        'section' : 'dnssec',
+        'type' : LType.ListNegativeTrustAnchors,
+        'default' : '',
+        'help' : 'A sequence of negative trust anchors',
+        'doc' : '''
+Sequence of negative trust anchors.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'trustanchorfile',
+        'section' : 'dnssec',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'A path to a zone file containing trust anchors',
+        'doc' : '''
+A path to a zone file to read trust anchors from.
+This can be used to read distribution provided trust anchors, as for instance ``/usr/share/dns/root.key`` from Debian's ``dns-root-data`` package.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'trustanchorfile_interval',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '24',
+        'help' : 'Interval (in hours) to read the trust anchors file',
+        'doc' : '''
+Interval (in hours) to re-read the ``trustanchorfile``.  Zero disables periodic re-reads.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'protobuf_servers',
+        'section' : 'logging',
+        'type' : LType.ListProtobufServers,
+        'default' : '',
+        'help' : 'Sequence of protobuf servers',
+        'doc' : '''
+Sequence of outgoing protobuf servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'outgoing_protobuf_servers',
+        'section' : 'logging',
+        'type' : LType.ListProtobufServers,
+        'default' : '',
+        'help' : 'List of outgoing protobuf servers',
+        'doc' : '''
+Sequence of outgoing protobuf servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'protobuf_mask_v4',
+        'section' : 'logging',
+        'type' : LType.Uint64,
+        'default' : '32',
+        'help' : 'Network mask to apply for client IPv4 addresses in protobuf messages',
+        'doc' : '''
+Network mask to apply to the client IPv4 addresses, for anonymization purposes. The default of 32 means no anonymization.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'protobuf_mask_v6',
+        'section' : 'logging',
+        'type' : LType.Uint64,
+        'default' : '128',
+        'help' : 'Network mask to apply for client IPv6 addresses in protobuf messages',
+        'doc' : '''
+Network mask to apply to the client IPv6 addresses, for anonymization purposes. The default of 128 means no anonymization.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'dnstap_framestream_servers',
+        'section' : 'logging',
+        'type' : LType.ListDNSTapFrameStreamServers,
+        'default' : '',
+        'help' : 'Sequence of dnstap servers',
+        'doc' : '''
+Sequence of dnstap servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'dnstap_nod_framestream_servers',
+        'section' : 'logging',
+        'type' : LType.ListDNSTapNODFrameStreamServers,
+        'default' : '',
+        'help' : 'Sequence of NOD dnstap servers',
+        'doc' : '''
+Sequence of NOD dnstap servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'sortlists',
+        'section' : 'recursor',
+        'type' : LType.ListSortLists,
+        'default' : '',
+        'help' : 'Sequence of sort lists',
+        'doc' : '''
+Sequence of sort lists.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/sortlist`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'rpzs',
+        'section' : 'recursor',
+        'type' : LType.ListRPZs,
+        'default' : '',
+        'help' : 'Sequence of RPZ entries',
+        'doc' : '''
+Sequence of RPZ entries.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/rpz`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'zonetocaches',
+        'section' : 'recordcache',
+        'type' : LType.ListZoneToCaches,
+        'default' : '',
+        'help' : 'Sequence of ZoneToCache entries ',
+        'doc' : '''
+Sequence of ZoneToCache entries
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/ztc`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'allowed_additional_qtypes',
+        'section' : 'recursor',
+        'type' : LType.ListAllowedAdditionalQTypes,
+        'default' : '',
+        'help' : 'Sequence of AllowedAdditionalQType',
+        'doc' : '''
+Sequence of AllowedAdditionalQType
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/additionals`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'proxymappings',
+        'section' : 'incoming',
+        'type' : LType.ListProxyMappings,
+        'default' : '',
+        'help' : 'Sequence of ProxyMapping',
+        'doc' : '''
+Sequence of ProxyMapping
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/proxymapping`',
+        'versionadded': '5.1.0',
     },
 ]

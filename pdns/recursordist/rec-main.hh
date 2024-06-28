@@ -125,7 +125,7 @@ struct DNSComboWriter
   };
   std::string d_query;
   std::unordered_set<std::string> d_policyTags;
-  const std::unordered_set<std::string> d_gettagPolicyTags;
+  std::unordered_set<std::string> d_gettagPolicyTags;
   std::string d_routingTag;
   std::vector<DNSRecord> d_records;
 
@@ -193,6 +193,7 @@ extern std::unique_ptr<RecursorPacketCache> g_packetCache;
 using RemoteLoggerStats_t = std::unordered_map<std::string, RemoteLoggerInterface::Stats>;
 
 extern bool g_yamlSettings;
+extern string g_yamlSettingsSuffix;
 extern bool g_logCommonErrors;
 extern size_t g_proxyProtocolMaximumSize;
 extern std::atomic<bool> g_quiet;
@@ -212,6 +213,7 @@ extern double g_balancingFactor;
 extern size_t g_maxUDPQueriesPerRound;
 extern bool g_useKernelTimestamp;
 extern bool g_allowNoRD;
+extern unsigned int g_maxChainLength;
 extern thread_local std::shared_ptr<NetmaskGroup> t_allowFrom;
 extern thread_local std::shared_ptr<NetmaskGroup> t_allowNotifyFrom;
 extern thread_local std::shared_ptr<notifyset_t> t_allowNotifyFor;
@@ -244,6 +246,7 @@ extern bool g_nodEnabled;
 extern DNSName g_nodLookupDomain;
 extern bool g_nodLog;
 extern SuffixMatchNode g_nodDomainWL;
+extern SuffixMatchNode g_udrDomainWL;
 extern std::string g_nod_pbtag;
 extern bool g_udrEnabled;
 extern bool g_udrLog;
@@ -620,6 +623,10 @@ void handleNewTCPQuestion(int fileDesc, FDMultiplexer::funcparam_t&);
 
 void makeUDPServerSockets(deferredAdd_t& deferredAdds, Logr::log_t);
 string doTraceRegex(FDWrapper file, vector<string>::const_iterator begin, vector<string>::const_iterator end);
+extern bool g_luaSettingsInYAML;
+void startLuaConfigDelayedThreads(const vector<RPZTrackerParams>& rpzs, uint64_t generation);
+void activateLuaConfig(LuaConfigItems& lci);
+unsigned int authWaitTimeMSec(const std::unique_ptr<MT_t>& mtasker);
 
 #define LOCAL_NETS "127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 192.168.0.0/16, 172.16.0.0/12, ::1/128, fc00::/7, fe80::/10"
 #define LOCAL_NETS_INVERSE "!127.0.0.0/8, !10.0.0.0/8, !100.64.0.0/10, !169.254.0.0/16, !192.168.0.0/16, !172.16.0.0/12, !::1/128, !fc00::/7, !fe80::/10"

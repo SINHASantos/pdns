@@ -19,11 +19,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-
 #pragma once
 
-#include <iputils.hh>
+#include "rust/cxx.h"
 
-std::string generateXPFPayload(bool tcp, const ComboAddress& source, const ComboAddress& destination);
-bool parseXPFPayload(const char* payload, size_t len, ComboAddress& source, ComboAddress* destination);
-
+namespace pdns::rust::settings::rec
+{
+uint16_t qTypeStringToCode(::rust::Str str);
+bool isValidHostname(::rust::Str str);
+}

@@ -194,7 +194,6 @@ public:
   uint8_t ednsRCode{0};
   bool ecsOverride;
   bool useECS{true};
-  bool addXPF{true};
   bool asynchronous{false};
 };
 
@@ -239,7 +238,8 @@ public:
     NoOp,
     NoRecurse,
     SpoofRaw,
-    SpoofPacket
+    SpoofPacket,
+    SetTag,
   };
   static std::string typeToString(const Action& action)
   {
@@ -268,6 +268,8 @@ public:
       return "Truncate over UDP";
     case Action::ServFail:
       return "Send ServFail";
+    case Action::SetTag:
+      return "Set Tag";
     case Action::None:
     case Action::NoOp:
       return "Do nothing";
@@ -317,26 +319,25 @@ public:
 
 struct DynBlock
 {
-  DynBlock() :
-    action(DNSAction::Action::None), warning(false)
+  DynBlock()
   {
     until.tv_sec = 0;
     until.tv_nsec = 0;
   }
 
   DynBlock(const std::string& reason_, const struct timespec& until_, const DNSName& domain_, DNSAction::Action action_) :
-    reason(reason_), domain(domain_), until(until_), action(action_), warning(false)
+    reason(reason_), domain(domain_), until(until_), action(action_)
   {
   }
 
   DynBlock(const DynBlock& rhs) :
-    reason(rhs.reason), domain(rhs.domain), until(rhs.until), action(rhs.action), warning(rhs.warning), bpf(rhs.bpf)
+    reason(rhs.reason), domain(rhs.domain), until(rhs.until), tagSettings(rhs.tagSettings), action(rhs.action), warning(rhs.warning), bpf(rhs.bpf)
   {
     blocks.store(rhs.blocks);
   }
 
   DynBlock(DynBlock&& rhs) :
-    reason(std::move(rhs.reason)), domain(std::move(rhs.domain)), until(rhs.until), action(rhs.action), warning(rhs.warning), bpf(rhs.bpf)
+    reason(std::move(rhs.reason)), domain(std::move(rhs.domain)), until(rhs.until), tagSettings(std::move(rhs.tagSettings)), action(rhs.action), warning(rhs.warning), bpf(rhs.bpf)
   {
     blocks.store(rhs.blocks);
   }
@@ -350,6 +351,7 @@ struct DynBlock
     blocks.store(rhs.blocks);
     warning = rhs.warning;
     bpf = rhs.bpf;
+    tagSettings = rhs.tagSettings;
     return *this;
   }
 
@@ -362,13 +364,21 @@ struct DynBlock
     blocks.store(rhs.blocks);
     warning = rhs.warning;
     bpf = rhs.bpf;
+    tagSettings = std::move(rhs.tagSettings);
     return *this;
   }
 
+  struct TagSettings
+  {
+    std::string d_name;
+    std::string d_value;
+  };
+
   string reason;
   DNSName domain;
-  struct timespec until;
-  mutable std::atomic<unsigned int> blocks;
+  timespec until{};
+  std::shared_ptr<TagSettings> tagSettings{nullptr};
+  mutable std::atomic<uint32_t> blocks{0};
   DNSAction::Action action{DNSAction::Action::None};
   bool warning{false};
   bool bpf{false};
@@ -775,7 +785,6 @@ struct DownstreamState : public std::enable_shared_from_this<DownstreamState>
     QType checkType{QType::A};
     uint16_t checkClass{QClass::IN};
     uint16_t d_retries{5};
-    uint16_t xpfRRCode{0};
     uint16_t checkTimeout{1000}; /* in milliseconds */
     uint16_t d_lazyHealthCheckSampleSize{100};
     uint16_t d_lazyHealthCheckMinSampleCount{1};
@@ -894,7 +903,7 @@ public:
   uint16_t currentCheckFailures{0};
   std::atomic<bool> hashesComputed{false};
   std::atomic<bool> connected{false};
-  bool upStatus{false};
+  std::atomic<bool> upStatus{false};
 
 private:
   void handleUDPTimeout(IDState& ids);
@@ -933,7 +942,7 @@ public:
     else if (d_config.availability == Availability::Up) {
       return true;
     }
-    return upStatus;
+    return upStatus.load(std::memory_order_relaxed);
   }
 
   void setUp()
@@ -943,8 +952,8 @@ public:
 
   void setUpStatus(bool newStatus)
   {
-    upStatus = newStatus;
-    if (!upStatus) {
+    upStatus.store(newStatus);
+    if (!newStatus) {
       latencyUsec = 0.0;
       latencyUsecTCP = 0.0;
     }
@@ -990,7 +999,7 @@ public:
       status = "DOWN";
     }
     else {
-      status = (upStatus ? "up" : "down");
+      status = (upStatus.load(std::memory_order_relaxed) ? "up" : "down");
     }
     return status;
   }

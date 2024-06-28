@@ -31,6 +31,7 @@
 #include "dnsdist-lua.hh"
 #include "dnsdist-ecs.hh"
 #include "dnsdist-rings.hh"
+#include "dnsdist-svc.hh"
 #include "dolog.hh"
 
 uint16_t dnsdist_ffi_dnsquestion_get_qtype(const dnsdist_ffi_dnsquestion_t* dq)
@@ -207,11 +208,6 @@ bool dnsdist_ffi_dnsquestion_get_skip_cache(const dnsdist_ffi_dnsquestion_t* dq)
 bool dnsdist_ffi_dnsquestion_get_use_ecs(const dnsdist_ffi_dnsquestion_t* dq)
 {
   return dq->dq->useECS;
-}
-
-bool dnsdist_ffi_dnsquestion_get_add_xpf(const dnsdist_ffi_dnsquestion_t* dq)
-{
-  return dq->dq->addXPF;
 }
 
 bool dnsdist_ffi_dnsquestion_get_ecs_override(const dnsdist_ffi_dnsquestion_t* dq)
@@ -1088,6 +1084,25 @@ size_t dnsdist_ffi_dnsquestion_generate_proxy_protocol_payload(const dnsdist_ffi
   return payload.size();
 }
 
+bool dnsdist_ffi_dnsquestion_add_proxy_protocol_values(dnsdist_ffi_dnsquestion_t* dnsQuestion, const size_t valuesCount, const dnsdist_ffi_proxy_protocol_value_t* values)
+{
+  if (dnsQuestion == nullptr || dnsQuestion->dq == nullptr || values == nullptr || valuesCount == 0) {
+    return false;
+  }
+
+  if (!dnsQuestion->dq->proxyProtocolValues) {
+    dnsQuestion->dq->proxyProtocolValues = make_unique<std::vector<ProxyProtocolValue>>();
+  }
+
+  dnsQuestion->dq->proxyProtocolValues->reserve(dnsQuestion->dq->proxyProtocolValues->size() + valuesCount);
+  for (size_t idx = 0; idx < valuesCount; idx++) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): the Lua FFI API is a C API..
+    dnsQuestion->dq->proxyProtocolValues->push_back({ std::string(values[idx].value, values[idx].size), values[idx].type });
+  }
+
+  return true;
+}
+
 struct dnsdist_ffi_domain_list_t
 {
   std::vector<std::string> d_domains;
@@ -1821,7 +1836,7 @@ uint16_t dnsdist_ffi_network_message_get_endpoint_id(const dnsdist_ffi_network_m
 }
 
 #ifndef DISABLE_DYNBLOCKS
-bool dnsdist_ffi_dynamic_blocks_add(const char* address, const char* message, uint8_t action, unsigned int duration, uint8_t clientIPMask, uint8_t clientIPPortMask)
+bool dnsdist_ffi_dynamic_blocks_add(const char* address, const char* message, uint8_t action, unsigned int duration, uint8_t clientIPMask, uint8_t clientIPPortMask, const char* tagKey, const char* tagValue)
 {
   try {
     ComboAddress clientIPCA;
@@ -1839,12 +1854,20 @@ bool dnsdist_ffi_dynamic_blocks_add(const char* address, const char* message, ui
 
     AddressAndPortRange target(clientIPCA, clientIPMask, clientIPPortMask);
 
-    struct timespec now
-    {
-    };
+    timespec now{};
     gettime(&now);
+    timespec until{now};
+    until.tv_sec += duration;
+    DynBlock dblock{message, until, DNSName(), static_cast<DNSAction::Action>(action)};
     auto slow = g_dynblockNMG.getCopy();
-    if (dnsdist::DynamicBlocks::addOrRefreshBlock(slow, now, target, message, duration, static_cast<DNSAction::Action>(action), false, false)) {
+    if (dblock.action == DNSAction::Action::SetTag && tagKey != nullptr) {
+      dblock.tagSettings = std::make_shared<DynBlock::TagSettings>();
+      dblock.tagSettings->d_name = tagKey;
+      if (tagValue != nullptr) {
+        dblock.tagSettings->d_value = tagValue;
+      }
+    }
+    if (dnsdist::DynamicBlocks::addOrRefreshBlock(slow, now, target, std::move(dblock), false)) {
       g_dynblockNMG.setState(slow);
       return true;
     }
@@ -1861,7 +1884,7 @@ bool dnsdist_ffi_dynamic_blocks_add(const char* address, const char* message, ui
   return false;
 }
 
-bool dnsdist_ffi_dynamic_blocks_smt_add(const char* suffix, const char* message, uint8_t action, unsigned int duration)
+bool dnsdist_ffi_dynamic_blocks_smt_add(const char* suffix, const char* message, uint8_t action, unsigned int duration, const char* tagKey, const char* tagValue)
 {
   try {
     DNSName domain;
@@ -1878,12 +1901,20 @@ bool dnsdist_ffi_dynamic_blocks_smt_add(const char* suffix, const char* message,
       return false;
     }
 
-    struct timespec now
-    {
-    };
+    timespec now{};
     gettime(&now);
+    timespec until{now};
+    until.tv_sec += duration;
+    DynBlock dblock{message, until, domain, static_cast<DNSAction::Action>(action)};
     auto slow = g_dynblockSMT.getCopy();
-    if (dnsdist::DynamicBlocks::addOrRefreshBlockSMT(slow, now, domain, message, duration, static_cast<DNSAction::Action>(action), false)) {
+    if (dblock.action == DNSAction::Action::SetTag && tagKey != nullptr) {
+      dblock.tagSettings = std::make_shared<DynBlock::TagSettings>();
+      dblock.tagSettings->d_name = tagKey;
+      if (tagValue != nullptr) {
+        dblock.tagSettings->d_value = tagValue;
+      }
+    }
+    if (dnsdist::DynamicBlocks::addOrRefreshBlockSMT(slow, now, std::move(dblock), false)) {
       g_dynblockSMT.setState(slow);
       return true;
     }
@@ -2015,4 +2046,137 @@ uint32_t dnsdist_ffi_hash(uint32_t seed, const unsigned char* data, size_t dataS
   }
 
   return burtle(data, dataSize, seed);
+}
+
+struct dnsdist_ffi_svc_record_parameters
+{
+  SVCRecordParameters parameters;
+};
+
+bool dnsdist_ffi_svc_record_parameters_new(const char* targetName, uint16_t priority, bool noDefaultALPN, dnsdist_ffi_svc_record_parameters** out)
+{
+  if (targetName == nullptr || out == nullptr) {
+    return false;
+  }
+  try {
+    auto parameters = std::make_unique<dnsdist_ffi_svc_record_parameters>();
+    parameters->parameters.target = DNSName(targetName);
+    parameters->parameters.priority = priority;
+    parameters->parameters.noDefaultAlpn = noDefaultALPN;
+    *out = parameters.release();
+    return true;
+  }
+  catch (const std::exception& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_new: %s", exp.what());
+  }
+  catch (const PDNSException& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_new: %s", exp.reason);
+  }
+  catch (...) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_new");
+  }
+
+  return false;
+}
+
+void dnsdist_ffi_svc_record_parameters_set_port(dnsdist_ffi_svc_record_parameters* parameters, uint16_t port)
+{
+  if (parameters == nullptr) {
+    return;
+  }
+  parameters->parameters.port = port;
+}
+
+void dnsdist_ffi_svc_record_parameters_set_ech(dnsdist_ffi_svc_record_parameters* parameters, const char* ech, size_t echLen)
+{
+  if (parameters == nullptr || ech == nullptr || echLen == 0) {
+    return;
+  }
+  parameters->parameters.ech = std::string(ech, echLen);
+}
+
+void dnsdist_ffi_svc_record_parameters_set_additional_param(dnsdist_ffi_svc_record_parameters* parameters, uint16_t key, const char* value, size_t valueLen)
+{
+  if (parameters == nullptr || (value == nullptr && valueLen != 0)) {
+    return;
+  }
+  parameters->parameters.additionalParams.emplace_back(key, std::string(value, valueLen));
+}
+
+void dnsdist_ffi_svc_record_parameters_add_mandatory_param(dnsdist_ffi_svc_record_parameters* parameters, uint16_t key)
+{
+  if (parameters == nullptr) {
+    return;
+  }
+  parameters->parameters.mandatoryParams.insert(key);
+}
+
+void dnsdist_ffi_svc_record_parameters_add_alpn(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen)
+{
+  if (parameters == nullptr || value == nullptr || valueLen == 0) {
+    return;
+  }
+  parameters->parameters.alpns.emplace_back(value, valueLen);
+}
+
+void dnsdist_ffi_svc_record_parameters_add_ipv4_hint(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen)
+{
+  if (parameters == nullptr || value == nullptr || valueLen == 0) {
+    return;
+  }
+  try {
+    parameters->parameters.ipv4hints.emplace_back(ComboAddress(std::string(value, valueLen)));
+  }
+  catch (const std::exception& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint: %s", exp.what());
+  }
+  catch (const PDNSException& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint: %s", exp.reason);
+  }
+  catch (...) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint");
+  }
+}
+
+void dnsdist_ffi_svc_record_parameters_add_ipv6_hint(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen)
+{
+  if (parameters == nullptr || value == nullptr || valueLen == 0) {
+    return;
+  }
+  try {
+    parameters->parameters.ipv6hints.emplace_back(ComboAddress(std::string(value, valueLen)));
+  }
+  catch (const std::exception& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint: %s", exp.what());
+  }
+  catch (const PDNSException& exp) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint: %s", exp.reason);
+  }
+  catch (...) {
+    errlog("Exception in dnsdist_ffi_svc_record_parameters_add_ipv4_hint");
+  }
+}
+
+bool dnsdist_ffi_dnsquestion_generate_svc_response(dnsdist_ffi_dnsquestion_t* dnsQuestion, const dnsdist_ffi_svc_record_parameters** parametersList, size_t parametersListSize, uint32_t ttl)
+{
+  if (dnsQuestion == nullptr || parametersList == nullptr || parametersListSize == 0) {
+    return false;
+  }
+  std::vector<SVCRecordParameters> parameters;
+  parameters.reserve(parametersListSize);
+  for (size_t idx = 0; idx < parametersListSize; idx++) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): this is a C API
+    const auto* parameter = parametersList[idx];
+    if (parameter == nullptr) {
+      return false;
+    }
+    parameters.push_back(parameter->parameters);
+  }
+  return dnsdist::svc::generateSVCResponse(*dnsQuestion->dq, ttl, parameters);
+}
+
+void dnsdist_ffi_svc_record_parameters_free(dnsdist_ffi_svc_record_parameters* parameters)
+{
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): this is a C API, RAII is not an option
+  delete parameters;
 }

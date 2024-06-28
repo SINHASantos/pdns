@@ -74,26 +74,33 @@ static void initArguments(int argc, char** argv, Logr::log_t log)
 
   cleanSlashes(configname);
 
-  const string yamlconfigname = configname + ".yml";
   string msg;
   pdns::rust::settings::rec::Recursorsettings settings;
+  pdns::settings::rec::YamlSettingsStatus yamlstatus{};
 
-  auto yamlstatus = pdns::settings::rec::readYamlSettings(yamlconfigname, "", settings, msg, g_slog);
+  for (const string suffix : {".yml", ".conf"}) {
+    const string yamlconfigname = configname + suffix;
+    yamlstatus = pdns::settings::rec::readYamlSettings(yamlconfigname, "", settings, msg, g_slog);
 
-  switch (yamlstatus) {
-  case pdns::settings::rec::YamlSettingsStatus::CannotOpen:
-    break;
-  case pdns::settings::rec::YamlSettingsStatus::PresentButFailed:
-    log->error(Logr::Error, msg, "YAML config found, but error ocurred processing it", "configname", Logging::Loggable(yamlconfigname));
-    exit(1); // NOLINT(concurrency-mt-unsafe)
-    break;
-  case pdns::settings::rec::YamlSettingsStatus::OK:
-    log->info(Logr::Notice, "YAML config found and processed", "configname", Logging::Loggable(yamlconfigname));
-    pdns::settings::rec::bridgeStructToOldStyleSettings(settings);
-    break;
+    switch (yamlstatus) {
+    case pdns::settings::rec::YamlSettingsStatus::CannotOpen:
+      break;
+    case pdns::settings::rec::YamlSettingsStatus::PresentButFailed:
+      if (suffix == ".yml") {
+        log->error(Logr::Error, msg, "YAML config found, but error ocurred processing it", "configname", Logging::Loggable(yamlconfigname));
+        exit(1); // NOLINT(concurrency-mt-unsafe)
+      }
+      break;
+    case pdns::settings::rec::YamlSettingsStatus::OK:
+      log->info(Logr::Notice, "YAML config found and processed", "configname", Logging::Loggable(yamlconfigname));
+      pdns::settings::rec::bridgeStructToOldStyleSettings(settings);
+      break;
+    }
+    if (yamlstatus == pdns::settings::rec::YamlSettingsStatus::OK) {
+      break;
+    }
   }
-
-  if (yamlstatus == pdns::settings::rec::YamlSettingsStatus::CannotOpen) {
+  if (yamlstatus != pdns::settings::rec::YamlSettingsStatus::OK) {
     configname += ".conf";
     arg().laxFile(configname);
   }
@@ -109,6 +116,41 @@ static void initArguments(int argc, char** argv, Logr::log_t log)
   else if (!::arg()["chroot"].empty()) {
     ::arg().set("socket-dir") = ::arg()["chroot"] + "/" + ::arg()["socket-dir"];
   }
+}
+
+static std::string showLuaYAML(const ::rust::string& rfile)
+{
+  std::string msg;
+  if (rfile.empty()) {
+    return msg;
+  }
+
+  const auto file = string(rfile);
+  ProxyMapping proxyMapping;
+  LuaConfigItems lci;
+
+  try {
+    loadRecursorLuaConfig(file, proxyMapping, lci);
+    auto settings = pdns::rust::settings::rec::parse_yaml_string("");
+    pdns::settings::rec::fromLuaConfigToBridgeStruct(lci, proxyMapping, settings);
+    auto yaml = settings.to_yaml_string();
+    msg += "# Start of converted Lua config .yml based on " + file + "\n";
+    msg += std::string(yaml);
+    msg += "# Validation result: ";
+    try {
+      // Parse back and validate
+      settings.validate();
+      msg += "OK";
+    }
+    catch (const rust::Error& err) {
+      msg += err.what();
+    }
+    msg += "\n# End of converted " + file + "\n#\n";
+  }
+  catch (PDNSException& e) {
+    cerr << "Cannot load Lua configuration: " << e.reason << endl;
+  }
+  return msg;
 }
 
 static std::string showIncludeYAML(::rust::String& rdirname)
@@ -220,6 +262,7 @@ static RecursorControlChannel::Answer showYAML(const std::string& path)
     }
     msg += "\n# End of converted " + configName + "\n#\n";
 
+    msg += showLuaYAML(mainsettings.recursor.lua_config_file);
     msg += showIncludeYAML(mainsettings.recursor.include_dir);
     msg += showForwardFileYAML(mainsettings.recursor.forward_zones_file);
     msg += showAllowYAML(mainsettings.incoming.allow_from_file, "incoming", "allow_from_file", pdns::rust::settings::rec::validate_allow_from);

@@ -31,6 +31,8 @@
 #include "shuffle.hh"
 #include "validate-recursor.hh"
 
+#include "ratelimitedlog.hh"
+
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
@@ -97,6 +99,8 @@ GlobalStateHolder<SuffixMatchNode> g_dontThrottleNames;
 GlobalStateHolder<NetmaskGroup> g_dontThrottleNetmasks;
 GlobalStateHolder<SuffixMatchNode> g_DoTToAuthNames;
 uint64_t g_latencyStatSize;
+
+static pdns::RateLimitedLog s_rateLimitedLogger;
 
 LWResult::Result UDPClientSocks::getSocket(const ComboAddress& toaddr, int* fileDesc)
 {
@@ -247,7 +251,7 @@ PacketBuffer GenUDPQueryResponse(const ComboAddress& dest, const string& query)
   t_fdm->addReadFD(socket.getHandle(), handleGenUDPQueryResponse, pident);
 
   PacketBuffer data;
-  int ret = g_multiTasker->waitEvent(pident, &data, g_networkTimeoutMsec);
+  int ret = g_multiTasker->waitEvent(pident, &data, authWaitTimeMSec(g_multiTasker));
 
   if (ret == 0 || ret == -1) { // timeout
     t_fdm->removeReadFD(socket.getHandle());
@@ -263,9 +267,23 @@ static void handleUDPServerResponse(int fileDesc, FDMultiplexer::funcparam_t& va
 
 thread_local std::unique_ptr<UDPClientSocks> t_udpclientsocks;
 
+// If we have plenty of mthreads slot left, use default timeout.
+// Otherwise reduce the timeout to be between g_networkTimeoutMsec/10 and g_networkTimeoutMsec
+unsigned int authWaitTimeMSec(const std::unique_ptr<MT_t>& mtasker)
+{
+  const auto max = g_maxMThreads;
+  const auto current = mtasker->numProcesses();
+  const unsigned int cutoff = max / 10; // if we have less than 10% used,  do not reduce auth timeout
+  if (current < cutoff) {
+    return g_networkTimeoutMsec;
+  }
+  const auto avail = max - current;
+  return std::max(g_networkTimeoutMsec / 10, g_networkTimeoutMsec * avail / (max - cutoff));
+}
+
 /* these two functions are used by LWRes */
 LWResult::Result asendto(const void* data, size_t len, int /* flags */,
-                         const ComboAddress& toAddress, uint16_t qid, const DNSName& domain, uint16_t qtype, bool ecs, int* fileDesc)
+                         const ComboAddress& toAddress, uint16_t qid, const DNSName& domain, uint16_t qtype, bool ecs, int* fileDesc, timeval& now)
 {
 
   auto pident = std::make_shared<PacketID>();
@@ -287,8 +305,21 @@ LWResult::Result asendto(const void* data, size_t len, int /* flags */,
       assert(chain.first->key->domain == pident->domain); // NOLINT
       // don't chain onto existing chained waiter or a chain already processed
       if (chain.first->key->fd > -1 && !chain.first->key->closed) {
-        chain.first->key->chain.insert(qid); // we can chain
         *fileDesc = -1; // gets used in waitEvent / sendEvent later on
+        auto currentChainSize = chain.first->key->authReqChain.size();
+        if (g_maxChainLength > 0 && currentChainSize >= g_maxChainLength) {
+          return LWResult::Result::OSLimitError;
+        }
+        assert(uSec(chain.first->key->creationTime) != 0); // NOLINT
+        auto age = now - chain.first->key->creationTime;
+        if (uSec(age) > static_cast<uint64_t>(1000) * authWaitTimeMSec(g_multiTasker) * 2 / 3) {
+          return LWResult::Result::OSLimitError;
+        }
+        chain.first->key->authReqChain.insert(qid); // we can chain
+        auto maxLength = t_Counters.at(rec::Counter::maxChainLength);
+        if (currentChainSize > maxLength) {
+          t_Counters.at(rec::Counter::maxChainLength) = currentChainSize;
+        }
         return LWResult::Result::Success;
       }
     }
@@ -327,8 +358,9 @@ LWResult::Result arecvfrom(PacketBuffer& packet, int /* flags */, const ComboAdd
   pident->domain = domain;
   pident->type = qtype;
   pident->remote = fromAddr;
+  pident->creationTime = now;
 
-  int ret = g_multiTasker->waitEvent(pident, &packet, g_networkTimeoutMsec, &now);
+  int ret = g_multiTasker->waitEvent(pident, &packet, authWaitTimeMSec(g_multiTasker), &now);
   len = 0;
 
   /* -1 means error, 0 means timeout, 1 means a result from handleUDPServerResponse() which might still be an error */
@@ -481,7 +513,7 @@ public:
   }
 
 private:
-  std::unique_ptr<DNSComboWriter>& d_dc;
+  std::unique_ptr<DNSComboWriter>& d_dc; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
   bool d_handled{false};
 };
 
@@ -593,17 +625,18 @@ static bool nodCheckNewDomain(Logr::log_t nodlogger, const DNSName& dname)
 {
   bool ret = false;
   // First check the (sub)domain isn't ignored for NOD purposes
-  if (!g_nodDomainWL.check(dname)) {
-    // Now check the NODDB (note this is probabilistic so can have FNs/FPs)
-    if (g_nodDBp && g_nodDBp->isNewDomain(dname)) {
-      if (g_nodLog) {
-        // This should probably log to a dedicated log file
-        SLOG(g_log << Logger::Notice << "Newly observed domain nod=" << dname << endl,
-             nodlogger->info(Logr::Notice, "New domain observed"));
-      }
-      t_Counters.at(rec::Counter::nodCount)++;
-      ret = true;
+  if (g_nodDomainWL.check(dname)) {
+    return ret;
+  }
+  // Now check the NODDB (note this is probabilistic so can have FNs/FPs)
+  if (g_nodDBp && g_nodDBp->isNewDomain(dname)) {
+    if (g_nodLog) {
+      // This should probably log to a dedicated log file
+      SLOG(g_log << Logger::Notice << "Newly observed domain nod=" << dname << endl,
+           nodlogger->info(Logr::Notice, "New domain observed"));
     }
+    t_Counters.at(rec::Counter::nodCount)++;
+    ret = true;
   }
   return ret;
 }
@@ -632,6 +665,10 @@ static void sendNODLookup(Logr::log_t nodlogger, const DNSName& dname)
 static bool udrCheckUniqueDNSRecord(Logr::log_t nodlogger, const DNSName& dname, uint16_t qtype, const DNSRecord& record)
 {
   bool ret = false;
+  // First check the (sub)domain isn't ignored for UDR purposes
+  if (g_udrDomainWL.check(dname)) {
+    return ret;
+  }
   if (record.d_place == DNSResourceRecord::ANSWER || record.d_place == DNSResourceRecord::ADDITIONAL) {
     // Create a string that represent a triplet of (qname, qtype and RR[type, name, content])
     std::stringstream strStream;
@@ -748,6 +785,24 @@ int getFakeAAAARecords(const DNSName& qname, ComboAddress prefix, vector<DNSReco
                 }),
               ret.end());
   }
+  else {
+    // Remove double SOA records
+    std::set<DNSName> seenSOAs;
+    ret.erase(std::remove_if(
+                ret.begin(),
+                ret.end(),
+                [&seenSOAs](DNSRecord& record) {
+                  if (record.d_type == QType::SOA) {
+                    if (seenSOAs.count(record.d_name) > 0) {
+                      // We've had this SOA before, remove it
+                      return true;
+                    }
+                    seenSOAs.insert(record.d_name);
+                  }
+                  return false;
+                }),
+              ret.end());
+  }
   t_Counters.at(rec::Counter::dns64prefixanswers)++;
   return rcode;
 }
@@ -804,9 +859,8 @@ bool isAllowNotifyForZone(DNSName qname)
     return false;
   }
 
-  notifyset_t::const_iterator ret;
   do {
-    ret = t_allowNotifyFor->find(qname);
+    auto ret = t_allowNotifyFor->find(qname);
     if (ret != t_allowNotifyFor->end()) {
       return true;
     }
@@ -1819,7 +1873,9 @@ void startDoResolve(void* arg) // NOLINT(readability-function-cognitive-complexi
       pbMessage.setDeviceName(dnsQuestion.deviceName);
       pbMessage.setToPort(comboWriter->d_destination.getPort());
       pbMessage.addPolicyTags(comboWriter->d_gettagPolicyTags);
-
+      pbMessage.setWorkerId(RecThreadInfo::id());
+      pbMessage.setPacketCacheHit(false);
+      pbMessage.setOutgoingQueries(resolver.d_outqueries);
       for (const auto& metaValue : dnsQuestion.meta) {
         pbMessage.setMeta(metaValue.first, metaValue.second.stringVal, metaValue.second.intVal);
       }
@@ -2229,19 +2285,13 @@ static string* doProcessUDPQuestion(const std::string& question, const ComboAddr
               eventTrace.add(RecEventTrace::LuaGetTag, ctag, false);
             }
           }
-          catch (const std::exception& e) {
-            if (g_logCommonErrors) {
-              SLOG(g_log << Logger::Warning << "Error parsing a query packet qname='" << qname << "' for tag determination, setting tag=0: " << e.what() << endl,
-                   g_slogudpin->error(Logr::Warning, e.what(), "Error parsing a query packet for tag determination, setting tag=0", "qname", Logging::Loggable(qname), "remote", Logging::Loggable(fromaddr), "exception", Logging::Loggable("std;:exception")));
-            }
+          catch (const std::exception& stdException) {
+            s_rateLimitedLogger.log(g_slogudpin, "Error parsing a query packet for tag determination", stdException, "qname", Logging::Loggable(qname), "remote", Logging::Loggable(fromaddr));
           }
         }
       }
-      catch (const std::exception& e) {
-        if (g_logCommonErrors) {
-          SLOG(g_log << Logger::Warning << "Error parsing a query packet for tag determination, setting tag=0: " << e.what() << endl,
-               g_slogudpin->error(Logr::Warning, e.what(), "Error parsing a query packet for tag determination, setting tag=0", "remote", Logging::Loggable(fromaddr), "exception", Logging::Loggable("std;:exception")));
-        }
+      catch (const std::exception& stdException) {
+        s_rateLimitedLogger.log(g_slogudpin, "Error parsing a query packet for tag determination, setting tag=0", stdException);
       }
     }
 
@@ -2358,7 +2408,7 @@ static string* doProcessUDPQuestion(const std::string& question, const ComboAddr
     variable = true;
   }
 
-  if (g_multiTasker->numProcesses() > g_maxMThreads) {
+  if (g_multiTasker->numProcesses() >= g_maxMThreads) {
     if (!g_quiet) {
       SLOG(g_log << Logger::Notice << RecThreadInfo::id() << " [" << g_multiTasker->getTid() << "/" << g_multiTasker->numProcesses() << "] DROPPED question from " << source.toStringWithPort() << (source != fromaddr ? " (via " + fromaddr.toStringWithPort() + ")" : "") << ", over capacity" << endl,
            g_slogudpin->info(Logr::Notice, "Dropped question, over capacity", "source", Logging::Loggable(source), "remote", Logging::Loggable(fromaddr)));
@@ -2523,7 +2573,7 @@ static void handleNewUDPQuestion(int fileDesc, FDMultiplexer::funcparam_t& /* va
         }
       }
       if (t_remotes) {
-        t_remotes->push_back(fromaddr);
+        t_remotes->push_back(source);
       }
 
       if (t_allowFrom && !t_allowFrom->match(&mappedSource)) {
@@ -2836,16 +2886,34 @@ static void doResends(MT_t::waiters_t::iterator& iter, const std::shared_ptr<Pac
   // We close the chain for new entries, since they won't be processed anyway
   iter->key->closed = true;
 
-  if (iter->key->chain.empty()) {
+  if (iter->key->authReqChain.empty()) {
     return;
   }
-  for (auto i = iter->key->chain.begin(); i != iter->key->chain.end(); ++i) {
+
+  auto maxWeight = t_Counters.at(rec::Counter::maxChainWeight);
+  auto weight = iter->key->authReqChain.size() * content.size();
+  if (weight > maxWeight) {
+    t_Counters.at(rec::Counter::maxChainWeight) = weight;
+  }
+
+  for (auto qid : iter->key->authReqChain) {
     auto packetID = std::make_shared<PacketID>(*resend);
     packetID->fd = -1;
-    packetID->id = *i;
+    packetID->id = qid;
     g_multiTasker->sendEvent(packetID, &content);
     t_Counters.at(rec::Counter::chainResends)++;
   }
+}
+
+void mthreadSleep(unsigned int jitterMsec)
+{
+  auto neverHappens = std::make_shared<PacketID>();
+  neverHappens->id = dns_random_uint16();
+  neverHappens->type = dns_random_uint16();
+  neverHappens->remote = ComboAddress("100::"); // discard-only
+  neverHappens->remote.setPort(dns_random_uint16());
+  neverHappens->fd = -1;
+  assert(g_multiTasker->waitEvent(neverHappens, nullptr, jitterMsec) != -1); // NOLINT
 }
 
 static void handleUDPServerResponse(int fileDesc, FDMultiplexer::funcparam_t& var)

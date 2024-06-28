@@ -484,6 +484,7 @@ static void handlePrometheus(const YaHTTP::Request& req, YaHTTP::Response& resp)
   static const std::set<std::string> metricBlacklist = {"special-memory-usage", "latency-count", "latency-sum"};
   {
     auto entries = dnsdist::metrics::g_stats.entries.read_lock();
+    std::unordered_set<std::string> helpAndTypeSent;
     for (const auto& entry : *entries) {
       const auto& metricName = entry.d_name;
 
@@ -515,8 +516,11 @@ static void handlePrometheus(const YaHTTP::Request& req, YaHTTP::Response& resp)
       // for these we have the help and types encoded in the sources
       // but we need to be careful about labels in custom metrics
       std::string helpName = prometheusMetricName.substr(0, prometheusMetricName.find('{'));
-      output << "# HELP " << helpName << " " << metricDetails.description << "\n";
-      output << "# TYPE " << helpName << " " << prometheusTypeName << "\n";
+      if (helpAndTypeSent.count(helpName) == 0) {
+        helpAndTypeSent.insert(helpName);
+        output << "# HELP " << helpName << " " << metricDetails.description << "\n";
+        output << "# TYPE " << helpName << " " << prometheusTypeName << "\n";
+      }
       output << prometheusMetricName << " ";
 
       if (const auto& val = std::get_if<pdns::stat_t*>(&entry.d_value)) {
@@ -1078,7 +1082,7 @@ static void addServerToJSON(Json::array& servers, int identifier, const std::sha
     status = "DOWN";
   }
   else {
-    status = (backend->upStatus ? "up" : "down");
+    status = (backend->upStatus.load(std::memory_order_relaxed) ? "up" : "down");
   }
 
   Json::array pools;
@@ -1716,18 +1720,26 @@ static void handleRings(const YaHTTP::Request& req, YaHTTP::Response& resp)
   resp.headers["Content-Type"] = "application/json";
 }
 
-static std::unordered_map<std::string, std::function<void(const YaHTTP::Request&, YaHTTP::Response&)>> s_webHandlers;
-
-void registerWebHandler(const std::string& endpoint, std::function<void(const YaHTTP::Request&, YaHTTP::Response&)> handler);
-
-void registerWebHandler(const std::string& endpoint, std::function<void(const YaHTTP::Request&, YaHTTP::Response&)> handler)
+using WebHandler = std::function<void(const YaHTTP::Request&, YaHTTP::Response&)>;
+struct WebHandlerContext
 {
-  s_webHandlers[endpoint] = std::move(handler);
+  WebHandler d_handler;
+  bool d_isLua{false};
+};
+
+static SharedLockGuarded<std::unordered_map<std::string, WebHandlerContext>> s_webHandlers;
+
+void registerWebHandler(const std::string& endpoint, WebHandler handler, bool isLua = false);
+
+void registerWebHandler(const std::string& endpoint, WebHandler handler, bool isLua)
+{
+  auto handlers = s_webHandlers.write_lock();
+  (*handlers)[endpoint] = WebHandlerContext{std::move(handler), isLua};
 }
 
 void clearWebHandlers()
 {
-  s_webHandlers.clear();
+  s_webHandlers.write_lock()->clear();
 }
 
 #ifndef DISABLE_BUILTIN_HTML
@@ -1866,9 +1878,23 @@ static void connectionThread(WebClientConnection&& conn)
       resp.status = 405;
     }
     else {
-      const auto webHandlersIt = s_webHandlers.find(req.url.path);
-      if (webHandlersIt != s_webHandlers.end()) {
-        webHandlersIt->second(req, resp);
+      std::optional<WebHandlerContext> handlerCtx{std::nullopt};
+      {
+        auto handlers = s_webHandlers.read_lock();
+        const auto webHandlersIt = handlers->find(req.url.path);
+        if (webHandlersIt != handlers->end()) {
+          handlerCtx = webHandlersIt->second;
+        }
+      }
+
+      if (handlerCtx) {
+        if (handlerCtx->d_isLua) {
+          auto lua = g_lua.lock();
+          handlerCtx->d_handler(req, resp);
+        }
+        else {
+          handlerCtx->d_handler(req, resp);
+        }
       }
       else {
         resp.status = 404;

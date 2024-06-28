@@ -36,7 +36,6 @@
 #include "dnsdist-tcp-downstream.hh"
 #include "dnsdist-downstream-connection.hh"
 #include "dnsdist-tcp-upstream.hh"
-#include "dnsdist-xpf.hh"
 #include "dnsparser.hh"
 #include "dolog.hh"
 #include "gettime.hh"
@@ -171,7 +170,7 @@ void TCPClientCollection::addTCPClientThread(std::vector<ClientState*>& tcpAccep
     ++d_numthreads;
   }
   catch (const std::exception& e) {
-    errlog("Error creating TCP worker: %", e.what());
+    errlog("Error creating TCP worker: %s", e.what());
   }
 }
 
@@ -196,7 +195,7 @@ static IOState sendQueuedResponses(std::shared_ptr<IncomingTCPConnectionState>& 
   return IOState::Done;
 }
 
-void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse)
+void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse, size_t sentBytes)
 {
   if (currentResponse.d_idstate.qtype == QType::AXFR || currentResponse.d_idstate.qtype == QType::IXFR) {
     return;
@@ -208,13 +207,13 @@ void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse
   if (!currentResponse.d_idstate.selfGenerated && backend) {
     const auto& ids = currentResponse.d_idstate;
     double udiff = ids.queryRealTime.udiff();
-    vinfolog("Got answer from %s, relayed to %s (%s, %d bytes), took %f us", backend->d_config.remote.toStringWithPort(), ids.origRemote.toStringWithPort(), getProtocol().toString(), currentResponse.d_buffer.size(), udiff);
+    vinfolog("Got answer from %s, relayed to %s (%s, %d bytes), took %f us", backend->d_config.remote.toStringWithPort(), ids.origRemote.toStringWithPort(), getProtocol().toString(), sentBytes, udiff);
 
     auto backendProtocol = backend->getProtocol();
     if (backendProtocol == dnsdist::Protocol::DoUDP && !currentResponse.d_idstate.forwardedOverUDP) {
       backendProtocol = dnsdist::Protocol::DoTCP;
     }
-    ::handleResponseSent(ids, udiff, d_ci.remote, backend->d_config.remote, static_cast<unsigned int>(currentResponse.d_buffer.size()), currentResponse.d_cleartextDH, backendProtocol, true);
+    ::handleResponseSent(ids, udiff, d_ci.remote, backend->d_config.remote, static_cast<unsigned int>(sentBytes), currentResponse.d_cleartextDH, backendProtocol, true);
   }
   else {
     const auto& ids = currentResponse.d_idstate;
@@ -316,7 +315,7 @@ IOState IncomingTCPConnectionState::sendResponse(const struct timeval& now, TCPR
     auto iostate = d_handler.tryWrite(d_currentResponse.d_buffer, d_currentPos, d_currentResponse.d_buffer.size());
     if (iostate == IOState::Done) {
       DEBUGLOG("response sent from " << __PRETTY_FUNCTION__);
-      handleResponseSent(d_currentResponse);
+      handleResponseSent(d_currentResponse, d_currentResponse.d_buffer.size());
       return iostate;
     }
     d_lastIOBlocked = true;
@@ -398,7 +397,7 @@ void IncomingTCPConnectionState::queueResponse(std::shared_ptr<IncomingTCPConnec
 
     // for the same reason we need to update the state right away, nobody will do that for us
     if (state->active()) {
-      updateIO(state, iostate, now);
+      state->updateIO(iostate, now);
       // if we have not finished reading every available byte, we _need_ to do an actual read
       // attempt before waiting for the socket to become readable again, because if there is
       // buffered data available the socket might never become readable again.
@@ -440,18 +439,24 @@ void IncomingTCPConnectionState::handleAsyncReady([[maybe_unused]] int desc, FDM
   }
 }
 
-void IncomingTCPConnectionState::updateIO(std::shared_ptr<IncomingTCPConnectionState>& state, IOState newState, const struct timeval& now)
+void IncomingTCPConnectionState::updateIOForAsync(std::shared_ptr<IncomingTCPConnectionState>& conn)
 {
+  auto fds = conn->d_handler.getAsyncFDs();
+  for (const auto desc : fds) {
+    conn->d_threadData.mplexer->addReadFD(desc, handleAsyncReady, conn);
+  }
+  conn->d_ioState->update(IOState::Done, handleIOCallback, conn);
+}
+
+void IncomingTCPConnectionState::updateIO(IOState newState, const struct timeval& now)
+{
+  auto sharedPtrToConn = shared_from_this();
   if (newState == IOState::Async) {
-    auto fds = state->d_handler.getAsyncFDs();
-    for (const auto desc : fds) {
-      state->d_threadData.mplexer->addReadFD(desc, handleAsyncReady, state);
-    }
-    state->d_ioState->update(IOState::Done, handleIOCallback, state);
+    updateIOForAsync(sharedPtrToConn);
+    return;
   }
-  else {
-    state->d_ioState->update(newState, handleIOCallback, state, newState == IOState::NeedWrite ? state->getClientWriteTTD(now) : state->getClientReadTTD(now));
-  }
+
+  d_ioState->update(newState, handleIOCallback, sharedPtrToConn, newState == IOState::NeedWrite ? getClientWriteTTD(now) : getClientReadTTD(now));
 }
 
 /* called from the backend code when a new response has been received */
@@ -1121,7 +1126,7 @@ void IncomingTCPConnectionState::handleIO()
         iostate = d_handler.tryWrite(d_currentResponse.d_buffer, d_currentPos, d_currentResponse.d_buffer.size());
         if (iostate == IOState::Done) {
           DEBUGLOG("response sent from " << __PRETTY_FUNCTION__);
-          handleResponseSent(d_currentResponse);
+          handleResponseSent(d_currentResponse, d_currentResponse.d_buffer.size());
           d_state = State::idle;
         }
         else {
@@ -1166,12 +1171,12 @@ void IncomingTCPConnectionState::handleIO()
       return;
     }
 
-    auto state = shared_from_this();
+    auto sharedPtrToConn = shared_from_this();
     if (iostate == IOState::Done) {
-      d_ioState->update(iostate, handleIOCallback, state);
+      d_ioState->update(iostate, handleIOCallback, sharedPtrToConn);
     }
     else {
-      updateIO(state, iostate, now);
+      updateIO(iostate, now);
     }
     ioGuard.release();
   } while ((iostate == IOState::NeedRead || iostate == IOState::NeedWrite) && !d_lastIOBlocked);
@@ -1186,21 +1191,21 @@ void IncomingTCPConnectionState::notifyIOError(const struct timeval& now, TCPRes
     return;
   }
 
-  std::shared_ptr<IncomingTCPConnectionState> state = shared_from_this();
-  --state->d_currentQueriesCount;
-  state->d_hadErrors = true;
+  auto sharedPtrToConn = shared_from_this();
+  --sharedPtrToConn->d_currentQueriesCount;
+  sharedPtrToConn->d_hadErrors = true;
 
-  if (state->d_state == State::sendingResponse) {
+  if (sharedPtrToConn->d_state == State::sendingResponse) {
     /* if we have responses to send, let's do that first */
   }
-  else if (!state->d_queuedResponses.empty()) {
+  else if (!sharedPtrToConn->d_queuedResponses.empty()) {
     /* stop reading and send what we have */
     try {
-      auto iostate = sendQueuedResponses(state, now);
+      auto iostate = sendQueuedResponses(sharedPtrToConn, now);
 
-      if (state->active() && iostate != IOState::Done) {
+      if (sharedPtrToConn->active() && iostate != IOState::Done) {
         // we need to update the state right away, nobody will do that for us
-        updateIO(state, iostate, now);
+        updateIO(iostate, now);
       }
     }
     catch (const std::exception& e) {
@@ -1209,7 +1214,7 @@ void IncomingTCPConnectionState::notifyIOError(const struct timeval& now, TCPRes
   }
   else {
     // the backend code already tried to reconnect if it was possible
-    state->terminateClientConnection();
+    sharedPtrToConn->terminateClientConnection();
   }
 }
 

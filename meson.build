@@ -106,6 +106,15 @@ libpdns_gettime = declare_dependency(
   )
 )
 
+libpdns_uuidutils = declare_dependency(
+  link_whole: static_library(
+    'pdns-uuidutils',
+    src_dir / 'uuid-utils.cc',
+    src_dir / 'uuid-utils.hh',
+    dependencies: [dep_rt, dep_boost],
+  )
+)
+
 if get_option('module-lmdb') != 'disabled'
   subdir('ext' / 'lmdb-safe')
 endif
@@ -623,8 +632,6 @@ common_sources += files(
   src_dir / 'unix_semaphore.cc',
   src_dir / 'unix_utility.cc',
   src_dir / 'utility.hh',
-  src_dir / 'uuid-utils.cc',
-  src_dir / 'uuid-utils.hh',
   src_dir / 'validate.hh',
   src_dir / 'version.cc',
   src_dir / 'version.hh',
@@ -669,43 +676,7 @@ if dep_cdb.found()
   )
 endif
 
-# Modules
-all_modules = [
-  'bind',
-  'pipe',
-  'gmysql',
-  'godbc',
-  'gpgsql',
-  'gsqlite3',
-  'ldap',
-  'lua2',
-  'remote',
-  'tinydns',
-  'geoip',
-  'lmdb',
-]
-
-selected_modules = []
-selected_dyn_modules = []
-dep_modules = []
-foreach module_name: all_modules
-  module_backend_name = module_name + 'backend'
-  module_opt = get_option('module-' + module_name)
-
-  if module_opt == 'disabled'
-    continue
-  elif module_opt == 'static'
-    selected_modules += module_name
-  else
-    selected_dyn_modules += module_name
-  endif
-
-  subdir('modules' / module_backend_name)
-  dep_modules += get_variable('dep_' + module_backend_name)
-endforeach
-
-conf.set_quoted('PDNS_MODULES', ' '.join(selected_modules), description: 'Built-in modules')
-conf.set_quoted('PDNS_DYN_MODULES', ' '.join(selected_dyn_modules), description: 'Loadable modules')
+subdir('modules')
 
 # Generate config.h
 config_h = configure_file(configuration: conf, output: 'config.h')
@@ -726,6 +697,7 @@ tools = {
   },
   'pdns-auth-util': {
     'main': src_dir / 'pdnsutil.cc',
+    'export-dynamic': true,
     'files-extra': libpdns_bind_dnssec_schema_gen,
     'deps-extra': [
       dep_modules,
@@ -1019,6 +991,7 @@ foreach tool, info: tools
       dependencies: [
         deps,
         libpdns_common,
+        libpdns_uuidutils,
         deps_extra,
       ],
     )
@@ -1111,4 +1084,18 @@ if get_option('module-remote') != 'disabled' and get_option('unit-tests-backends
       is_parallel: false,
     )
   endforeach
+endif
+
+if get_option('unit-tests-backends')
+  start_test_stop = files('regression-tests' / 'start-test-stop')[0]
+endif
+
+if get_option('module-geoip') != 'disabled' and get_option('unit-tests-backends')
+  test(
+    'pdns-auth-backend-geoip',
+    start_test_stop,
+    args: ['5300', 'geoip'],
+    workdir: product_source_dir / 'regression-tests',
+    depends: [pdns_auth],
+  )
 endif

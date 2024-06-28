@@ -77,17 +77,23 @@ If your systems shows great imbalance in the number of queries processed per thr
 MTasker and MThreads
 --------------------
 
-PowerDNS Recursor uses a cooperative multitasking in userspace called ``MTasker``, based either on ``boost::context`` if available, or on ``System V ucontexts`` otherwise. For maximum performance, please make sure that your system supports ``boost::context``, as the alternative has been known to be quite slower.
+PowerDNS :program:`Recursor` uses a cooperative multitasking in userspace called ``MTasker``, based either on ``boost::context`` if available, or on ``System V ucontexts`` otherwise. For maximum performance, please make sure that your system supports ``boost::context``, as the alternative has been known to be quite slower.
 
 The maximum number of simultaneous MTasker threads, called ``MThreads``, can be tuned via :ref:`setting-max-mthreads`, as the default value of 2048 might not be enough for large-scale installations.
 This setting limits the number of mthreads *per physical (Posix) thread*.
 The threads that create mthreads are the distributor and worker threads.
 
-When a ``MThread`` is started, a new stack is dynamically allocated for it on the heap. The size of that stack can be configured via the :ref:`setting-stack-size` parameter, whose default value is 200 kB which should be enough in most cases.
+When a ``MThread`` is started, a new stack is dynamically allocated for it. The size of that stack can be configured via the :ref:`setting-stack-size` parameter, whose default value is 200 kB which should be enough in most cases.
 
 To reduce the cost of allocating a new stack for every query, the recursor can cache a small amount of stacks to make sure that the allocation stays cheap. This can be configured via the :ref:`setting-stack-cache-size` setting.
 This limit is per physical (Posix) thread.
 The only trade-off of enabling this cache is a slightly increased memory consumption, at worst equals to the number of stacks specified by :ref:`setting-stack-cache-size` multiplied by the size of one stack, itself specified via :ref:`setting-stack-size`.
+
+Linux limits the number of memory mappings a process can allocate by the ``vm.max_map_count`` kernel parameter.
+A single ``MThread`` stack can take up to 3 memory mappings.
+Starting with version 4.9, it is advised to check and if needed update the value of ``sysctl vm.max_map_count`` to make sure that the :program:`Recursor` can allocate enough stacks under load; suggested value is at least ``4 * (threads + 2) * max-mthreads``.
+Some Linux distributions use a default value of about one million, which should be enough for most configurations.
+Other distributions default to 64k, which can be too low for large setups.
 
 Performance tips
 ----------------
@@ -103,6 +109,32 @@ This is good for a 20% performance boost in some cases.
 When running with >3000 queries per second, and running Linux versions prior to 2.6.17 on some motherboards, your computer may spend an inordinate amount of time working around an ACPI bug for each call to gettimeofday.
 This is solved by rebooting with ``clock=tsc`` or upgrading to a 2.6.17 kernel.
 This is relevant if dmesg shows ``Using pmtmr for high-res timesource``.
+
+Memory usage
+------------
+
+:program:`Recursor` keeps all the data it needs in memory.
+The default configuration uses a little more than 1GB when the caches are full.
+Depending on configuration, memory usage can amount to many gigabytes for a large installation.
+
+.. warning::
+   Avoid swapping. The memory access patterns of :program:`Recursor` are random. This means
+   that it will cause trashing (the OS spending lots of time pulling in and writing out memory
+   pages) if :program:`Recursor` uses more physical memory than available and performance will be severely impacted.
+
+Below the memory usage observed for a specific test case are described.
+Please note that depending on OS, version of system libraries, version of the :program:`Recursor`, features used and usage patterns these numbers may vary.
+Test and observe your system to learn more about the memory requirements specific to your case.
+
+The most important subsystems that use memory are:
+
+- The packet cache. The amount of memory used in a test case was about 500 bytes per entry
+- The record cache. The amount of memory used in a test case was about 850 bytes per entry
+- Authoritative zones loaded. Memory usage is dependent on the size and number loaded.
+- RPZ zones loaded. Memory usage is dependent on the size and number loaded.
+- NOD DBs. Memory usage is dependent on specific settings of this subsystem.
+
+An estimate for the memory used by its caches for a :program:`Recursor` having 2 million record cache entries and 1 million packet cache entries is ``2e6 * 850 * + 1e6 * 500 = about 2GB``.
 
 Connection tracking and firewalls
 ---------------------------------

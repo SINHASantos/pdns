@@ -222,8 +222,10 @@ void IncomingHTTP2Connection::handleResponse(const struct timeval& now, TCPRespo
 
 std::unique_ptr<DOHUnitInterface> IncomingHTTP2Connection::getDOHUnit(uint32_t streamID)
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(streamID <= std::numeric_limits<IncomingHTTP2Connection::StreamID>::max());
+  if (streamID > std::numeric_limits<IncomingHTTP2Connection::StreamID>::max()) {
+    throw std::runtime_error("Invalid stream ID while retrieving DoH unit");
+  }
+
   // NOLINTNEXTLINE(*-narrowing-conversions): generic interface between DNS and DoH with different types
   auto query = std::move(d_currentStreams.at(static_cast<IncomingHTTP2Connection::StreamID>(streamID)));
   return std::make_unique<IncomingDoHCrossProtocolContext>(std::move(query), std::dynamic_pointer_cast<IncomingHTTP2Connection>(shared_from_this()), streamID);
@@ -551,8 +553,9 @@ void NGHTTP2Headers::addDynamicHeader(std::vector<nghttp2_nv>& headers, NGHTTP2H
 
 IOState IncomingHTTP2Connection::sendResponse(const struct timeval& now, TCPResponse&& response)
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(response.d_idstate.d_streamID != -1);
+  if (response.d_idstate.d_streamID == -1) {
+    throw std::runtime_error("Invalid DoH stream ID while sending response");
+  }
   auto& context = d_currentStreams.at(response.d_idstate.d_streamID);
 
   uint32_t statusCode = 200U;
@@ -568,8 +571,9 @@ IOState IncomingHTTP2Connection::sendResponse(const struct timeval& now, TCPResp
     responseBuffer = std::move(response.d_buffer);
   }
 
+  auto sent = responseBuffer.size();
   sendResponse(response.d_idstate.d_streamID, context, statusCode, d_ci.cs->dohFrontend->d_customResponseHeaders, contentType, sendContentType);
-  handleResponseSent(response);
+  handleResponseSent(response, sent);
 
   return hasPendingWrite() ? IOState::NeedWrite : IOState::Done;
 }
@@ -583,8 +587,10 @@ void IncomingHTTP2Connection::notifyIOError(const struct timeval& now, TCPRespon
     return;
   }
 
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(response.d_idstate.d_streamID != -1);
+  if (response.d_idstate.d_streamID == -1) {
+    throw std::runtime_error("Invalid DoH stream ID while handling I/O error notification");
+  }
+
   auto& context = d_currentStreams.at(response.d_idstate.d_streamID);
   context.d_buffer = std::move(response.d_buffer);
   sendResponse(response.d_idstate.d_streamID, context, 502, d_ci.cs->dohFrontend->d_customResponseHeaders);
@@ -918,6 +924,9 @@ int IncomingHTTP2Connection::on_frame_recv_callback(nghttp2_session* session, co
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   }
+  else if (frame->hd.type == NGHTTP2_PING) {
+    conn->d_needFlush = true;
+  }
 
   return 0;
 }
@@ -1166,9 +1175,21 @@ boost::optional<struct timeval> IncomingHTTP2Connection::getIdleClientReadTTD(st
   return now;
 }
 
+void IncomingHTTP2Connection::updateIO(IOState newState, const timeval& now)
+{
+  (void)now;
+  updateIO(newState, newState == IOState::NeedWrite ? handleWritableIOCallback : handleReadableIOCallback);
+}
+
 void IncomingHTTP2Connection::updateIO(IOState newState, const FDMultiplexer::callbackfunc_t& callback)
 {
   boost::optional<struct timeval> ttd{boost::none};
+
+  if (newState == IOState::Async) {
+    auto shared = shared_from_this();
+    updateIOForAsync(shared);
+    return;
+  }
 
   auto shared = std::dynamic_pointer_cast<IncomingHTTP2Connection>(shared_from_this());
   if (!shared || !d_ioState) {

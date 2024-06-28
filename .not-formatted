@@ -33,15 +33,12 @@
 ./pdns/dns.cc
 ./pdns/dns.hh
 ./pdns/dnsbulktest.cc
-./pdns/dnscrypt.cc
-./pdns/dnscrypt.hh
 ./pdns/dnsdemog.cc
 ./pdns/dnsdistdist/connection-management.hh
 ./pdns/dnsdistdist/dnsdist-backend.cc
 ./pdns/dnsdistdist/dnsdist-kvs.cc
 ./pdns/dnsdistdist/dnsdist-kvs.hh
 ./pdns/dnsdistdist/dnsdist-lbpolicies.cc
-./pdns/dnsdistdist/dnsdist-lua-bindings-dnscrypt.cc
 ./pdns/dnsdistdist/dnsdist-lua-bindings-kvs.cc
 ./pdns/dnsdistdist/dnsdist-lua-bindings-packetcache.cc
 ./pdns/dnsdistdist/dnsdist-lua-bindings-protobuf.cc
@@ -108,8 +105,6 @@
 ./pdns/gettime.hh
 ./pdns/histog.hh
 ./pdns/inflighter.cc
-./pdns/iputils.cc
-./pdns/iputils.hh
 ./pdns/ixfr.cc
 ./pdns/ixfr.hh
 ./pdns/ixfrdist-stats.cc
@@ -125,7 +120,6 @@
 ./pdns/kvresp.cc
 ./pdns/libssl.cc
 ./pdns/libssl.hh
-./pdns/lock.hh
 ./pdns/lua-auth4.cc
 ./pdns/lua-auth4.hh
 ./pdns/lua-base4.cc
@@ -154,8 +148,6 @@
 ./pdns/pdnsutil.cc
 ./pdns/pkcs11signers.cc
 ./pdns/pkcs11signers.hh
-./pdns/protozero.cc
-./pdns/protozero.hh
 ./pdns/proxy-protocol.cc
 ./pdns/proxy-protocol.hh
 ./pdns/qtype.cc
@@ -177,14 +169,11 @@
 ./pdns/secpoll.cc
 ./pdns/secpoll.hh
 ./pdns/serialtweaker.cc
-./pdns/sholder.hh
 ./pdns/signingpipe.cc
 ./pdns/signingpipe.hh
 ./pdns/sillyrecords.cc
 ./pdns/snmp-agent.cc
 ./pdns/snmp-agent.hh
-./pdns/sortlist.cc
-./pdns/sortlist.hh
 ./pdns/speedtest.cc
 ./pdns/sstuff.hh
 ./pdns/standalone_fuzz_target_runner.cc
@@ -205,7 +194,6 @@
 ./pdns/test-base64_cc.cc
 ./pdns/test-common.hh
 ./pdns/test-distributor_hh.cc
-./pdns/test-dnscrypt_cc.cc
 ./pdns/test-dnsname_cc.cc
 ./pdns/test-dnsparser_cc.cc
 ./pdns/test-dnsparser_hh.cc

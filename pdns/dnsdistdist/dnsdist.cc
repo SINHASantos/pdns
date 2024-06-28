@@ -69,7 +69,6 @@
 #include "dnsdist-secpoll.hh"
 #include "dnsdist-tcp.hh"
 #include "dnsdist-web.hh"
-#include "dnsdist-xpf.hh"
 #include "dnsdist-xsk.hh"
 
 #include "base64.hh"
@@ -1022,6 +1021,8 @@ bool processRulesResult(const DNSAction::Action& action, DNSQuestion& dnsQuestio
   case DNSAction::Action::Delay:
     pdns::checked_stoi_into(dnsQuestion.ids.delayMsec, ruleresult); // sorry
     break;
+  case DNSAction::Action::SetTag:
+    /* unsupported for non-dynamic block */
   case DNSAction::Action::None:
     /* fall-through */
   case DNSAction::Action::NoOp:
@@ -1143,6 +1144,18 @@ static bool applyRulesToQuery(LocalHolders& holders, DNSQuestion& dnsQuestion, c
           return true;
         });
         return true;
+      case DNSAction::Action::SetTag: {
+        if (!got->second.tagSettings) {
+          vinfolog("Skipping set tag dynamic block for query from %s because of missing options", dnsQuestion.ids.origRemote.toStringWithPort());
+          break;
+        }
+        updateBlockStats();
+        const auto& tagName = got->second.tagSettings->d_name;
+        const auto& tagValue = got->second.tagSettings->d_value;
+        dnsQuestion.setTag(tagName, tagValue);
+        vinfolog("Query from %s setting tag %s to %s because of dynamic block", dnsQuestion.ids.origRemote.toStringWithPort(), tagName, tagValue);
+        return true;
+      }
       default:
         updateBlockStats();
         vinfolog("Query from %s dropped because of dynamic block", dnsQuestion.ids.origRemote.toStringWithPort());
@@ -1205,6 +1218,18 @@ static bool applyRulesToQuery(LocalHolders& holders, DNSQuestion& dnsQuestion, c
           return true;
         });
         return true;
+      case DNSAction::Action::SetTag: {
+        if (!got->tagSettings) {
+          vinfolog("Skipping set tag dynamic block for query from %s because of missing options", dnsQuestion.ids.origRemote.toStringWithPort());
+          break;
+        }
+        updateBlockStats();
+        const auto& tagName = got->tagSettings->d_name;
+        const auto& tagValue = got->tagSettings->d_value;
+        dnsQuestion.setTag(tagName, tagValue);
+        vinfolog("Query from %s setting tag %s to %s because of dynamic block", dnsQuestion.ids.origRemote.toStringWithPort(), tagName, tagValue);
+        return true;
+      }
       default:
         updateBlockStats();
         vinfolog("Query from %s for %s dropped because of dynamic block", dnsQuestion.ids.origRemote.toStringWithPort(), dnsQuestion.ids.qname.toLogString());
@@ -1572,10 +1597,6 @@ ProcessQueryResult processQueryAfterRules(DNSQuestion& dnsQuestion, LocalHolders
     /* save the DNS flags as sent to the backend so we can cache the answer with the right flags later */
     dnsQuestion.ids.cacheFlags = *getFlagsFromDNSHeader(dnsQuestion.getHeader().get());
 
-    if (dnsQuestion.addXPF && selectedBackend->d_config.xpfRRCode != 0) {
-      addXPF(dnsQuestion, selectedBackend->d_config.xpfRRCode);
-    }
-
     if (selectedBackend->d_config.useProxyProtocol && dnsQuestion.getProtocol().isEncrypted() && selectedBackend->d_config.d_proxyProtocolAdvertiseTLS) {
       if (!dnsQuestion.proxyProtocolValues) {
         dnsQuestion.proxyProtocolValues = std::make_unique<std::vector<ProxyProtocolValue>>();
@@ -1684,6 +1705,15 @@ ProcessQueryResult processQuery(DNSQuestion& dnsQuestion, LocalHolders& holders,
        rings for example */
     timespec now{};
     gettime(&now);
+
+    if ((dnsQuestion.ids.qtype == QType::AXFR || dnsQuestion.ids.qtype == QType::IXFR) && (dnsQuestion.getProtocol() == dnsdist::Protocol::DoH || dnsQuestion.getProtocol() == dnsdist::Protocol::DoQ || dnsQuestion.getProtocol() == dnsdist::Protocol::DoH3)) {
+      dnsQuestion.editHeader([](dnsheader& header) {
+        header.rcode = RCode::NotImp;
+        header.qr = true;
+        return true;
+      });
+      return processQueryAfterRules(dnsQuestion, holders, selectedBackend);
+    }
 
     if (!applyRulesToQuery(holders, dnsQuestion, now)) {
       return ProcessQueryResult::Drop;
@@ -2753,7 +2783,23 @@ static void usage()
   cout << "-V,--version          Show dnsdist version information and exit\n";
 }
 
-#ifdef COVERAGE
+/* g++ defines __SANITIZE_THREAD__
+   clang++ supports the nice __has_feature(thread_sanitizer),
+   let's merge them */
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define __SANITIZE_THREAD__ 1
+#endif
+#if __has_feature(address_sanitizer)
+#define __SANITIZE_ADDRESS__ 1
+#endif
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) && defined(HAVE_LEAK_SANITIZER_INTERFACE)
+#include <sanitizer/lsan_interface.h>
+#endif
+
+#if defined(COVERAGE) || (defined(__SANITIZE_ADDRESS__) && defined(HAVE_LEAK_SANITIZER_INTERFACE))
 static void cleanupLuaObjects()
 {
   /* when our coverage mode is enabled, we need to make sure
@@ -2770,24 +2816,16 @@ static void cleanupLuaObjects()
   clearWebHandlers();
   dnsdist::lua::hooks::clearMaintenanceHooks();
 }
+#endif /* defined(COVERAGE) || (defined(__SANITIZE_ADDRESS__) && defined(HAVE_LEAK_SANITIZER_INTERFACE)) */
 
+#if defined(COVERAGE)
 static void sigTermHandler(int)
 {
   cleanupLuaObjects();
   pdns::coverage::dumpCoverageData();
   _exit(EXIT_SUCCESS);
 }
-#else /* COVERAGE */
-
-/* g++ defines __SANITIZE_THREAD__
-   clang++ supports the nice __has_feature(thread_sanitizer),
-   let's merge them */
-#if defined(__has_feature)
-#if __has_feature(thread_sanitizer)
-#define __SANITIZE_THREAD__ 1
-#endif
-#endif
-
+#else
 static void sigTermHandler([[maybe_unused]] int sig)
 {
 #if !defined(__SANITIZE_THREAD__)
@@ -2802,7 +2840,17 @@ static void sigTermHandler([[maybe_unused]] int sig)
   }
   std::cout << "Exiting on user request" << std::endl;
 #endif /* __SANITIZE_THREAD__ */
-
+#if defined(__SANITIZE_ADDRESS__) && defined(HAVE_LEAK_SANITIZER_INTERFACE)
+  if (dnsdist::g_asyncHolder) {
+    dnsdist::g_asyncHolder->stop();
+  }
+  {
+    auto lock = g_lua.lock();
+    cleanupLuaObjects();
+    *lock = LuaContext();
+  }
+  __lsan_do_leak_check();
+#endif /* __SANITIZE_ADDRESS__ && HAVE_LEAK_SANITIZER_INTERFACE */
   _exit(EXIT_SUCCESS);
 }
 #endif /* COVERAGE */

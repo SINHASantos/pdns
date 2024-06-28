@@ -20,10 +20,8 @@ GlobalStateHolder<SuffixMatchNode> g_DoTToAuthNames;
 std::unique_ptr<MemRecursorCache> g_recCache;
 std::unique_ptr<NegCache> g_negCache;
 bool g_lowercaseOutgoing = false;
-#if 0
-pdns::TaskQueue g_test_tasks;
-pdns::TaskQueue g_resolve_tasks;
-#endif
+unsigned int g_networkTimeoutMsec = 1500;
+
 /* Fake some required functions we didn't want the trouble to
    link with */
 ArgvMap& arg()
@@ -188,6 +186,7 @@ void initSR(bool debug)
   SyncRes::s_locked_ttlperc = 0;
   SyncRes::s_minimize_one_label = 4;
   SyncRes::s_max_minimize_count = 10;
+  SyncRes::s_max_CNAMES_followed = 10;
 
   SyncRes::clearNSSpeeds();
   BOOST_CHECK_EQUAL(SyncRes::getNSSpeedsSize(), 0U);
@@ -495,7 +494,7 @@ void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest,
   keys[name] = std::pair<DNSSECPrivateKey, DSRecordContent>(dpk, ds);
 }
 
-void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest, testkeysset_t& keys, map<DNSName, dsmap_t>& dsAnchors)
+void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest, testkeysset_t& keys, map<DNSName, dsset_t>& dsAnchors)
 {
   generateKeyMaterial(name, algo, digest, keys);
   dsAnchors[name].insert(keys[name].second);

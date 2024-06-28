@@ -30,6 +30,14 @@
 
 #ifdef HAVE_NET_SNMP
 
+#include <net-snmp/net-snmp-config.h>
+#include <net-snmp/definitions.h>
+#include <net-snmp/types.h>
+#include <net-snmp/utilities.h>
+#include <net-snmp/config_api.h>
+#include <net-snmp/agent/net-snmp-agent-includes.h>
+#undef INET6 /* SRSLY? */
+
 #define RECURSOR_OID 1, 3, 6, 1, 4, 1, 43315, 2
 #define RECURSOR_STATS_OID RECURSOR_OID, 1
 #define RECURSOR_TRAPS_OID RECURSOR_OID, 10, 0
@@ -195,6 +203,8 @@ static const oid10 packetCacheContendedOID = {RECURSOR_STATS_OID, 145};
 static const oid10 packetCacheAcquiredOID = {RECURSOR_STATS_OID, 146};
 static const oid10 nodEventsOID = {RECURSOR_STATS_OID, 147};
 static const oid10 udrEventsOID = {RECURSOR_STATS_OID, 148};
+static const oid10 maxChainLengthOID = {RECURSOR_STATS_OID, 149};
+static const oid10 maxChainWeightOID = {RECURSOR_STATS_OID, 150};
 
 static std::unordered_map<oid, std::string> s_statsMap;
 
@@ -275,12 +285,9 @@ bool RecursorSNMPAgent::sendCustomTrap([[maybe_unused]] const std::string& reaso
 #ifdef HAVE_NET_SNMP
   netsnmp_variable_list* varList = nullptr;
 
-  snmp_varlist_add_variable(&varList,
-                            snmpTrapOID.data(),
-                            snmpTrapOID.size(),
-                            ASN_OBJECT_ID,
-                            customTrapOID.data(),
-                            customTrapOID.size() * sizeof(oid));
+  addSNMPTrapOID(&varList,
+                 customTrapOID.data(),
+                 customTrapOID.size() * sizeof(oid));
 
   snmp_varlist_add_variable(&varList,
                             trapReasonOID.data(),
@@ -451,6 +458,8 @@ RecursorSNMPAgent::RecursorSNMPAgent(const std::string& name, const std::string&
   registerCounter64Stat("packetcache-acquired", packetCacheAcquiredOID);
   registerCounter64Stat("nod-events", nodEventsOID);
   registerCounter64Stat("udr-events", udrEventsOID);
+  registerCounter64Stat("max-chain-length", maxChainLengthOID);
+  registerCounter64Stat("max-chain-weight", maxChainWeightOID);
 
 #endif /* HAVE_NET_SNMP */
 }

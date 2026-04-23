@@ -116,6 +116,7 @@ AuthWebServer::AuthWebServer() :
     d_ws->setMaxBodySize(::arg().asNum("webserver-max-bodysize"));
     d_ws->setConnectionTimeout(::arg().asNum("webserver-connection-timeout"));
 
+    d_ws->setAllowCrossOriginRequests(arg().mustDo("allow-cross-origin-requests"));
     d_ws->bind();
   }
 }

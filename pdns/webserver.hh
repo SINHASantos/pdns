@@ -284,6 +284,11 @@ public:
     return d_loglevel;
   };
 
+  void setAllowCrossOriginRequests(bool value)
+  {
+    d_allow_cross_origin_requests = value;
+  }
+
   std::shared_ptr<Logr::Logger> d_slog;
 
 protected:
@@ -310,6 +315,7 @@ protected:
   int d_connectiontimeout{5}; // in seconds
 
   NetmaskGroup d_acl;
+  bool d_allow_cross_origin_requests{false};
 
   const string d_logprefix = "[webserver] ";
 

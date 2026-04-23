@@ -176,10 +176,18 @@ fn api_wrapper(
     allow_password: bool,
 ) {
     // security headers
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        header::HeaderValue::from_static("*"),
-    );
+    if ctx.allow_cross_origin_requests {
+        if let Some(origin) = reqheaders.get("origin") {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                origin.clone(),
+            );
+            headers.insert(
+                header::VARY,
+                header::HeaderValue::from_static("Origin"),
+            );
+        }
+    }
 
     // XXX AUDIT!
 
@@ -280,6 +288,7 @@ struct Context {
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
+    allow_cross_origin_requests: bool,
 }
 
 // Serve a file
@@ -415,7 +424,9 @@ fn matcher(
 
 // This constructs the answer to an OPTIONS query
 fn collect_options(
+    ctx: &Context,
     path: &str,
+    reqheaders: &header::HeaderMap,
     response: &mut rustweb::Response,
     my_logger: &cxx::SharedPtr<rustmisc::Logger>,
 ) {
@@ -453,10 +464,22 @@ fn collect_options(
     }
     response.status = 200;
     methods.push(Method::OPTIONS.to_string());
-    response.headers.push(rustweb::KeyValue {
-        key: String::from("access-control-allow-origin"),
-        value: String::from("*"),
-    });
+
+    if ctx.allow_cross_origin_requests {
+        if let Some(origin) = reqheaders.get("origin") { // keys are lowercased
+            if let Ok(origin_str) = origin.to_str() {
+                response.headers.push(rustweb::KeyValue {
+                    key: String::from("access-control-allow-origin"),
+                    value: origin_str.to_string(),
+                });
+                response.headers.push(rustweb::KeyValue {
+                    key: String::from("Vary"),
+                    value: String::from("Origin"),
+                });
+            }
+        }
+    }
+
     response.headers.push(rustweb::KeyValue {
         key: String::from("access-control-allow-headers"),
         value: String::from("Content-Type, X-API-Key"),
@@ -601,7 +624,7 @@ async fn process_request(
     let version = rust_request.version().to_owned();
 
     if method == Method::OPTIONS {
-        collect_options(&path, &mut response, &my_logger);
+        collect_options(&ctx, &path, &rust_request.headers(), &mut response, &my_logger);
     } else {
         // Find the right function implementing what the request wants
         let mut matchmethod = method.clone();
@@ -941,6 +964,7 @@ pub fn serveweb(
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
+    allow_cross_origin_requests: bool,
 ) -> Result<(), std::io::Error> {
     // Context, atomically reference counted
     let ctx = Arc::new(Context {
@@ -950,6 +974,7 @@ pub fn serveweb(
         logger,
         loglevel,
         max_request_size,
+        allow_cross_origin_requests,
     });
 
     // We use a single thread to handle all the requests, letting the runtime abstracts from this
@@ -1250,6 +1275,7 @@ mod rustweb {
             logger: SharedPtr<Logger>,
             loglevel: LogLevel,
             max_request_size: u64,
+            allow_cross_origin_requests: bool,
         ) -> Result<()>;
     }
 

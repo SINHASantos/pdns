@@ -276,6 +276,17 @@ Static pre-shared authentication key for access to the REST API. Since 4.6.0 the
         "versionchanged": ("4.6.0", "This setting now accepts a hashed and salted version."),
     },
     {
+        "name": "allow_cross_origin_requests",
+        "section": "webservice",
+        "type": LType.Bool,
+        "default": "false",
+        "help": "Whether the webserver allows cross-origin HTTP requests",
+        "doc": """
+Whether the webserver allows cross-origin HTTP requests. This might allow a malicious website to read metrics provided by the API if a user’s browser has valid credentials cached for the webserver while the user visits the malicious website.
+ """,
+        "versionadded": "5.5.0",
+    },
+    {
         "name": "auth_zones",
         "section": "recursor",
         "type": LType.ListAuthZones,

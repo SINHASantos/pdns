@@ -145,8 +145,15 @@ void WebServer::registerBareHandler(const string& url, const HandlerFunction& ha
   YaHTTP::Router::Map(method, url, std::move(f));
 }
 
-void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp, bool allowPassword) {
-  resp->headers["access-control-allow-origin"] = "*";
+void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp, bool allowPassword)
+{
+  if (d_allow_cross_origin_requests) {
+    const auto origin = req->headers.find("Origin");
+    if (origin != req->headers.end()) {
+      resp->headers["access-control-allow-origin"] = origin->second;
+      resp->headers["Vary"] = "Origin"; // prevents cached data to be used for a different Origin
+    }
+  }
 
   if (!d_apikey) {
     SLOG(g_log<<Logger::Error<<req->logprefix<<"HTTP API Request \"" << req->url.path << "\": Authentication failed, API Key missing in config" << endl,
@@ -604,7 +611,7 @@ WebServer::WebServer(std::shared_ptr<ConcurrentConnectionManager> ccm, string li
   d_maxbodysize(static_cast<ssize_t>(2 * 1024 * 1024))
 
 {
-    YaHTTP::Router::Map("OPTIONS", "/<*url>", [](YaHTTP::Request *req, YaHTTP::Response *resp) {
+    YaHTTP::Router::Map("OPTIONS", "/<*url>", [&allowCors = d_allow_cross_origin_requests](YaHTTP::Request *req, YaHTTP::Response *resp) {
       // look for url in routes
       bool seen = false;
       std::vector<std::string> methods;
@@ -626,7 +633,13 @@ WebServer::WebServer(std::shared_ptr<ConcurrentConnectionManager> ccm, string li
           return;
        }
        methods.emplace_back("OPTIONS");
-       resp->headers["access-control-allow-origin"] = "*";
+       if (allowCors) {
+         const auto origin = req->headers.find("Origin");
+         if (origin != req->headers.end()) {
+           resp->headers["access-control-allow-origin"] = origin->second;
+           resp->headers["Vary"] = "Origin"; // prevents cached data to be used for a different Origin
+         }
+       }
        resp->headers["access-control-allow-headers"] = "Content-Type, X-API-Key";
        resp->headers["access-control-allow-methods"] = boost::algorithm::join(methods, ", ");
        resp->headers["access-control-max-age"] = "3600";

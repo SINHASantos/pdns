@@ -255,6 +255,7 @@ static void declareArguments()
   ::arg().set("webserver-max-concurrent-connections", "Webserver/API maximum concurrent connections allowed") = "100";
   ::arg().set("webserver-connection-timeout", "Webserver/API request/response timeout in seconds") = "5";
   ::arg().setSwitch("webserver-hash-plaintext-credentials", "Whether to hash passwords and api keys supplied in plaintext, to prevent keeping the plaintext version in memory at runtime") = "no";
+  ::arg().setSwitch("allow-cross-origin-requests", "If the webserver should allow cross origin requests") = "no";
 
   ::arg().setSwitch("query-logging", "Hint backends that queries should be logged") = "no";
 

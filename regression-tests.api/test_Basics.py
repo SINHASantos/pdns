@@ -48,7 +48,7 @@ class TestBasics(ApiTestCase):
         # look for CORS headers
 
         self.assertEqual(r.status_code, requests.codes.ok)
-        self.assertEqual(r.headers["access-control-allow-origin"], "*")
+        self.assertNotIn("access-control-allow-origin", r.headers)
         self.assertEqual(r.headers["access-control-allow-headers"], "Content-Type, X-API-Key")
         self.assertEqual(r.headers["access-control-allow-methods"], "GET, OPTIONS")
 
@@ -56,7 +56,7 @@ class TestBasics(ApiTestCase):
 
         r = self.session.options(self.url("/api/v1/servers/localhost/zones/test"))
         self.assertEqual(r.status_code, requests.codes.ok)
-        self.assertNotIn("access-control-allow-origin"], r.headers)
+        self.assertNotIn("access-control-allow-origin", r.headers)
         self.assertEqual(r.headers["access-control-allow-headers"], "Content-Type, X-API-Key")
         if is_auth():
             self.assertEqual(r.headers["access-control-allow-methods"], "GET, PATCH, PUT, DELETE, OPTIONS")

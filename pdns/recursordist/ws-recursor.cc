@@ -1203,7 +1203,7 @@ void serveRustWeb()
   // This function returns after having created the web server object that handles the requests.
   // That object and its runtime are associated with a Posix thread that waits until all tasks are
   // done, which normally never happens. See rec-rust-lib/rust/src/web.rs for details
-  pdns::rust::web::rec::serveweb(config, std::move(password), std::move(apikey), std::move(aclPtr), std::move(logPtr), loglevel, arg().asNum("webserver-max-request-size") * 1024ULL * 1024ULL, arg().mustDo("allow-cross-origin-requests"));
+  pdns::rust::web::rec::serveweb(config, std::move(password), std::move(apikey), std::move(aclPtr), std::move(logPtr), loglevel, arg().asNum("webserver-max-request-size") * 1024ULL * 1024ULL, arg()["allow-cross-origin-requests"]);
 }
 
 static void fromCxxToRust(const HttpResponse& cxxresp, pdns::rust::web::rec::Response& rustResponse)

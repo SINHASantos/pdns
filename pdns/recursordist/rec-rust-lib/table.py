@@ -278,11 +278,11 @@ Static pre-shared authentication key for access to the REST API. Since 4.6.0 the
     {
         "name": "allow_cross_origin_requests",
         "section": "webservice",
-        "type": LType.Bool,
-        "default": "false",
-        "help": "Whether the webserver allows cross-origin HTTP requests",
+        "type": LType.String,
+        "default": "",
+        "help": "Value of access-control-allow-origin HTTP header",
         "doc": """
-Whether the webserver allows cross-origin HTTP requests. This might allow a malicious website to read metrics provided by the API if a user’s browser has valid credentials cached for the webserver while the user visits the malicious website.
+Whether the webserver allows cross-origin HTTP requests. If set, the access-control-cross-origin HTTP header is included with the given value. This might allow a malicious website to read metrics provided by the API if a user’s browser has valid credentials cached for the webserver while the user visits the malicious website.
  """,
         "versionadded": "5.5.0",
     },

@@ -176,11 +176,13 @@ fn api_wrapper(
     allow_password: bool,
 ) {
     // security headers
-    if ctx.allow_cross_origin_requests {
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            header::HeaderValue::from_static("*"),
-        );
+    if !ctx.allow_cross_origin_requests.is_empty()  {
+        if let Ok(value) = header::HeaderValue::from_str(&ctx.allow_cross_origin_requests) {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                value,
+            );
+        }
     }
 
     // XXX AUDIT!
@@ -282,7 +284,7 @@ struct Context {
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
-    allow_cross_origin_requests: bool,
+    allow_cross_origin_requests: String,
 }
 
 // Serve a file
@@ -458,10 +460,10 @@ fn collect_options(
     response.status = 200;
     methods.push(Method::OPTIONS.to_string());
 
-    if ctx.allow_cross_origin_requests {
+    if !ctx.allow_cross_origin_requests.is_empty() {
         response.headers.push(rustweb::KeyValue {
             key: String::from("access-control-allow-origin"),
-            value: String::from("*"),
+            value: String::from(ctx.allow_cross_origin_requests.clone()),
         });
     }
 
@@ -949,7 +951,7 @@ pub fn serveweb(
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
-    allow_cross_origin_requests: bool,
+    allow_cross_origin_requests: String,
 ) -> Result<(), std::io::Error> {
     // Context, atomically reference counted
     let ctx = Arc::new(Context {
@@ -1260,7 +1262,7 @@ mod rustweb {
             logger: SharedPtr<Logger>,
             loglevel: LogLevel,
             max_request_size: u64,
-            allow_cross_origin_requests: bool,
+            allow_cross_origin_requests: String,
         ) -> Result<()>;
     }
 

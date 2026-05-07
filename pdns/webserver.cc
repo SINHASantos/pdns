@@ -147,8 +147,8 @@ void WebServer::registerBareHandler(const string& url, const HandlerFunction& ha
 
 void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp, bool allowPassword)
 {
-  if (d_allow_cross_origin_requests) {
-      resp->headers["access-control-allow-origin"] = "*";
+  if (!d_allow_cross_origin_requests.empty()) {
+    resp->headers["access-control-allow-origin"] = d_allow_cross_origin_requests;
   }
 
   if (!d_apikey) {
@@ -629,8 +629,8 @@ WebServer::WebServer(std::shared_ptr<ConcurrentConnectionManager> ccm, string li
           return;
        }
        methods.emplace_back("OPTIONS");
-       if (allowCors) {
-         resp->headers["access-control-allow-origin"] = "*";
+       if (!allowCors.empty()) {
+         resp->headers["access-control-allow-origin"] = allowCors;
        }
        resp->headers["access-control-allow-headers"] = "Content-Type, X-API-Key";
        resp->headers["access-control-allow-methods"] = boost::algorithm::join(methods, ", ");

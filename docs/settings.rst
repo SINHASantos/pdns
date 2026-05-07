@@ -2261,10 +2261,10 @@ If the webserver should print arguments.
 -----------------------------------------
 .. versionadded:: 5.1.0
 
--  Boolean
--  Default: no
+-  String
+-  Default: empty
 
-If the webserver should allow cross origin requests.
+The value if the access-control-allow-origin HTTP header to include. This header is not inluded if the value is empty.
 
 .. _setting-write-pid:
 

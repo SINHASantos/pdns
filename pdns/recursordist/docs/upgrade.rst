@@ -22,6 +22,8 @@ New settings
 - The :ref:`setting-yaml-outgoing.max_bytesperq` setting has been introduced to limit the amount of incoming bytes per client query.
 - The :ref:`setting-yaml-recordcache.max_entry_size` setting has been introduced to limit the maximum size of a stored record set.
 - The :ref:`setting-yaml-packetcache.max_entry_size` setting has been introduced to limit the maximum size of a packet cache entry.
+- The :ref:`setting-yaml-webservice.allow_cross_origin_requests` setting has been introduced, default ``false``. This is a change of behaviour, as older versions do allow cross origin requests.
+
 
 5.3.0 to 5.4.0
 ---------------

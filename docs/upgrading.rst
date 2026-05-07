@@ -11,6 +11,12 @@ upgrade notes if your version is older than 3.4.2.
 5.0.0 to 5.1.0
 --------------
 
+Cross origin requests
+^^^^^^^^^^^^^^^^^^^^^
+
+The embedded webserver now does not include a ``access-control-allow-origin: *`` header by default.
+See :ref:`setting-webserver-allow-cross-origin-requests`.
+
 zone display
 ^^^^^^^^^^^^
 

@@ -1366,7 +1366,7 @@ Allow this many DNS queries in a single TCP transaction. 0 means
 unlimited. Note that exchanges related to an AXFR or IXFR are not
 affected by this setting.
 
-.. _setting-member-catalog-group
+.. _setting-member-catalog-group:
 
 ``member-catalog-group``
 ------------------------
@@ -2254,6 +2254,17 @@ Ignored if ``webserver-address`` is set to a UNIX domain socket.
 -  Default: no
 
 If the webserver should print arguments.
+
+.. _setting-webserver-cross-origin-request-header:
+
+``webserver-cross-origin-request-header``
+-----------------------------------------
+.. versionadded:: 5.1.0
+
+-  String
+-  Default: empty
+
+The value if the access-control-allow-origin HTTP header to include. This header is not included if the value is empty.
 
 .. _setting-write-pid:
 

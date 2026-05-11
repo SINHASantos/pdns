@@ -176,10 +176,14 @@ fn api_wrapper(
     allow_password: bool,
 ) {
     // security headers
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        header::HeaderValue::from_static("*"),
-    );
+    if !ctx.cross_origin_request_header.is_empty()  {
+        if let Ok(value) = header::HeaderValue::from_str(&ctx.cross_origin_request_header) {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                value,
+            );
+        }
+    }
 
     // XXX AUDIT!
 
@@ -280,6 +284,7 @@ struct Context {
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
+    cross_origin_request_header: String,
 }
 
 // Serve a file
@@ -415,6 +420,7 @@ fn matcher(
 
 // This constructs the answer to an OPTIONS query
 fn collect_options(
+    ctx: &Context,
     path: &str,
     response: &mut rustweb::Response,
     my_logger: &cxx::SharedPtr<rustmisc::Logger>,
@@ -453,10 +459,14 @@ fn collect_options(
     }
     response.status = 200;
     methods.push(Method::OPTIONS.to_string());
-    response.headers.push(rustweb::KeyValue {
-        key: String::from("access-control-allow-origin"),
-        value: String::from("*"),
-    });
+
+    if !ctx.cross_origin_request_header.is_empty() {
+        response.headers.push(rustweb::KeyValue {
+            key: String::from("access-control-allow-origin"),
+            value: String::from(ctx.cross_origin_request_header.clone()),
+        });
+    }
+
     response.headers.push(rustweb::KeyValue {
         key: String::from("access-control-allow-headers"),
         value: String::from("Content-Type, X-API-Key"),
@@ -601,7 +611,7 @@ async fn process_request(
     let version = rust_request.version().to_owned();
 
     if method == Method::OPTIONS {
-        collect_options(&path, &mut response, &my_logger);
+        collect_options(&ctx, &path, &mut response, &my_logger);
     } else {
         // Find the right function implementing what the request wants
         let mut matchmethod = method.clone();
@@ -941,6 +951,7 @@ pub fn serveweb(
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
+    cross_origin_request_header: String,
 ) -> Result<(), std::io::Error> {
     // Context, atomically reference counted
     let ctx = Arc::new(Context {
@@ -950,6 +961,7 @@ pub fn serveweb(
         logger,
         loglevel,
         max_request_size,
+        cross_origin_request_header,
     });
 
     // We use a single thread to handle all the requests, letting the runtime abstracts from this
@@ -1250,6 +1262,7 @@ mod rustweb {
             logger: SharedPtr<Logger>,
             loglevel: LogLevel,
             max_request_size: u64,
+            cross_origin_request_header: String,
         ) -> Result<()>;
     }
 

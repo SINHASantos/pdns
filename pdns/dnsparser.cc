@@ -266,8 +266,15 @@ void MOADNSParser::init(bool query, const std::string_view& packet)
     vector<unsigned char> record;
     bool seenTSIG = false;
     validPacket=true;
-    d_answers.reserve((unsigned int)(d_header.ancount + d_header.nscount + d_header.arcount));
-    for(n=0;n < (unsigned int)(d_header.ancount + d_header.nscount + d_header.arcount); ++n) {
+    unsigned int supposedRecordCount = d_header.ancount + d_header.nscount + d_header.arcount;
+    // No need to reserve more memory for more records than the request can
+    // contain. We could try to be smarter and actually count the records
+    // by doing getDnsrecordheader and skip the payload in a loop, but all
+    // we really want here is to avoid reserving too much memory in case of
+    // maliciously high record counts.
+    auto reserveRecordCount = std::min(1 + (packet.size() - sizeof(dnsheader)) / sizeof(dnsrecordheader), static_cast<size_t>(supposedRecordCount));
+    d_answers.reserve(reserveRecordCount);
+    for (n = 0; n < supposedRecordCount; ++n) {
       DNSRecord dr;
 
       if(n < d_header.ancount)

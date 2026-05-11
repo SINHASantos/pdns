@@ -14,7 +14,7 @@ upgrade notes if your version is older than 3.4.2.
 Cross origin requests
 ^^^^^^^^^^^^^^^^^^^^^
 
-The embedded webserver now does not include a ``access-control-allow-origin: *`` header by default.
+The embedded webserver now no longer includes a ``access-control-allow-origin: *`` header by default.
 See :ref:`setting-webserver-cross-origin-request-header`.
 
 zone display

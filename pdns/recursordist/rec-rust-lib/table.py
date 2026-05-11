@@ -276,7 +276,7 @@ Static pre-shared authentication key for access to the REST API. Since 4.6.0 the
         "versionchanged": ("4.6.0", "This setting now accepts a hashed and salted version."),
     },
     {
-        "name": "cross_origin_request_heaer",
+        "name": "cross_origin_request_header",
         "section": "webservice",
         "type": LType.String,
         "default": "",

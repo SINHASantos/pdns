@@ -2257,7 +2257,7 @@ If the webserver should print arguments.
 
 .. _setting-webserver-cross-origin-request-header:
 
-``webserver-cross-origin-request_header``
+``webserver-cross-origin-request-header``
 -----------------------------------------
 .. versionadded:: 5.1.0
 

@@ -176,8 +176,8 @@ fn api_wrapper(
     allow_password: bool,
 ) {
     // security headers
-    if !ctx.allow_cross_origin_requests.is_empty()  {
-        if let Ok(value) = header::HeaderValue::from_str(&ctx.allow_cross_origin_requests) {
+    if !ctx.cross_origin_request_header.is_empty()  {
+        if let Ok(value) = header::HeaderValue::from_str(&ctx.cross_origin_request_header) {
             headers.insert(
                 header::ACCESS_CONTROL_ALLOW_ORIGIN,
                 value,
@@ -284,7 +284,7 @@ struct Context {
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
-    allow_cross_origin_requests: String,
+    cross_origin_request_header: String,
 }
 
 // Serve a file
@@ -460,10 +460,10 @@ fn collect_options(
     response.status = 200;
     methods.push(Method::OPTIONS.to_string());
 
-    if !ctx.allow_cross_origin_requests.is_empty() {
+    if !ctx.cross_origin_request_header.is_empty() {
         response.headers.push(rustweb::KeyValue {
             key: String::from("access-control-allow-origin"),
-            value: String::from(ctx.allow_cross_origin_requests.clone()),
+            value: String::from(ctx.cross_origin_request_header.clone()),
         });
     }
 
@@ -951,7 +951,7 @@ pub fn serveweb(
     logger: cxx::SharedPtr<rustmisc::Logger>,
     loglevel: rustmisc::LogLevel,
     max_request_size: u64,
-    allow_cross_origin_requests: String,
+    cross_origin_request_header: String,
 ) -> Result<(), std::io::Error> {
     // Context, atomically reference counted
     let ctx = Arc::new(Context {
@@ -961,7 +961,7 @@ pub fn serveweb(
         logger,
         loglevel,
         max_request_size,
-        allow_cross_origin_requests,
+        cross_origin_request_header,
     });
 
     // We use a single thread to handle all the requests, letting the runtime abstracts from this
@@ -1262,7 +1262,7 @@ mod rustweb {
             logger: SharedPtr<Logger>,
             loglevel: LogLevel,
             max_request_size: u64,
-            allow_cross_origin_requests: String,
+            cross_origin_request_header: String,
         ) -> Result<()>;
     }
 

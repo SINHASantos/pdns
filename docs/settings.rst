@@ -2255,16 +2255,16 @@ Ignored if ``webserver-address`` is set to a UNIX domain socket.
 
 If the webserver should print arguments.
 
-.. _setting-webserver-allow-cross-origin-requests:
+.. _setting-webserver-cross-origin-request-header:
 
-``webserver-allow-cross-origin-requests``
+``webserver-cross-origin-request_header``
 -----------------------------------------
 .. versionadded:: 5.1.0
 
 -  String
 -  Default: empty
 
-The value if the access-control-allow-origin HTTP header to include. This header is not inluded if the value is empty.
+The value if the access-control-allow-origin HTTP header to include. This header is not included if the value is empty.
 
 .. _setting-write-pid:
 

@@ -15,7 +15,7 @@ Cross origin requests
 ^^^^^^^^^^^^^^^^^^^^^
 
 The embedded webserver now does not include a ``access-control-allow-origin: *`` header by default.
-See :ref:`setting-webserver-allow-cross-origin-requests`.
+See :ref:`setting-webserver-cross-origin-request-header`.
 
 zone display
 ^^^^^^^^^^^^

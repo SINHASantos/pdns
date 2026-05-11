@@ -147,8 +147,8 @@ void WebServer::registerBareHandler(const string& url, const HandlerFunction& ha
 
 void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp, bool allowPassword)
 {
-  if (!d_allow_cross_origin_requests.empty()) {
-    resp->headers["access-control-allow-origin"] = d_allow_cross_origin_requests;
+  if (!d_cross_origin_request_header.empty()) {
+    resp->headers["access-control-allow-origin"] = d_cross_origin_request_header;
   }
 
   if (!d_apikey) {
@@ -607,7 +607,7 @@ WebServer::WebServer(std::shared_ptr<ConcurrentConnectionManager> ccm, string li
   d_maxbodysize(static_cast<ssize_t>(2 * 1024 * 1024))
 
 {
-    YaHTTP::Router::Map("OPTIONS", "/<*url>", [&allowCors = d_allow_cross_origin_requests](YaHTTP::Request *req, YaHTTP::Response *resp) {
+    YaHTTP::Router::Map("OPTIONS", "/<*url>", [&allowCors = d_cross_origin_request_header](YaHTTP::Request *req, YaHTTP::Response *resp) {
       // look for url in routes
       bool seen = false;
       std::vector<std::string> methods;

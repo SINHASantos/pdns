@@ -318,6 +318,7 @@ class TestTCPLimitsTLSNewSessionRate(DNSDistTest):
         if not blocked:
             self.fail()
 
+
 class TestTCPLimitsTLSResumedSessionRate(DNSDistTest):
     # separate test suite because we get banned for a few seconds
     _testServerPort = pickAvailablePort()

@@ -955,10 +955,21 @@ effectively divides the packet cache in two when :ref:`setting-edns-padding-from
         "type": LType.ListStrings,
         "default": "",
         "help": "List of netmasks and domains that we should enable EDNS subnet for",
-        "doc": """
-List of netmasks and domains that :rfc:`EDNS Client Subnet <7871>` should be enabled for in outgoing queries.
+        "doc-new": """
+List of netmasks and suffix-matched domains that :rfc:`EDNS Client Subnet <7871>` should be enabled for in outgoing queries.
 
-For example, an EDNS Client Subnet option containing the address of the initial requestor (but see :ref:`setting-ecs-add-for`) will be added to an outgoing query sent to server 192.0.2.1 for domain X if 192.0.2.1 matches one of the supplied netmasks, or if X matches one of the supplied domains.
+For example, with a value of ``['192.0.2.0/24', 'example.com']`` an EDNS Client Subnet option containing the address of the initial requestor (but see :ref:`setting-ecs-add-for`) will be added to an outgoing query sent to a server having an address that is in the ``192.0.2.0/24`` network, or if the name queried has a suffix match with ``example.com``.
+The initial requestor address will be truncated to 24 bits for IPv4 (see :ref:`setting-ecs-ipv4-bits`) and to 56 bits for IPv6 (see :ref:`setting-ecs-ipv6-bits`), as recommended in the privacy section of RFC 7871.
+
+
+Note that this setting describes the destination of outgoing queries, not the sources of incoming queries, nor the subnets described in the EDNS Client Subnet option.
+
+By default, this option is empty, meaning no EDNS Client Subnet information is sent.
+ """,
+        "doc": """
+List of netmasks and suffix-matched domains that :rfc:`EDNS Client Subnet <7871>` should be enabled for in outgoing queries.
+
+For example, with a value of ``192.0.2.0/24, example.com`` an EDNS Client Subnet option containing the address of the initial requestor (but see :ref:`setting-ecs-add-for`) will be added to an outgoing query sent to a server having an address that is in the ``192.0.2.0/24`` network, or if the name queried has a suffix match with ``example.com``.
 The initial requestor address will be truncated to 24 bits for IPv4 (see :ref:`setting-ecs-ipv4-bits`) and to 56 bits for IPv6 (see :ref:`setting-ecs-ipv6-bits`), as recommended in the privacy section of RFC 7871.
 
 

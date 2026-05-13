@@ -967,13 +967,14 @@ static vector<string> genericIfUp(Logr::log_t slog, const boost::variant<iplist_
     throw std::runtime_error("if{url,port}up health check has not completed yet");
   }
 
-  // Apply backupSelector on all candidates
-  vector<ComboAddress> ret{};
-  for(const auto& unit : candidates) {
-    ret.insert(ret.end(), unit.begin(), unit.end());
+  // Apply backupSelector on all candidates in the first non-empty group
+  vector<ComboAddress> res;
+  for (const auto& unit : candidates) {
+    if (!unit.empty()) {
+      res = useSelector(slog, getOptionValue<string>(options, "backupSelector", "random"), s_lua_record_ctx->bestwho, unit);
+      break;
+    }
   }
-
-  vector<ComboAddress> res = useSelector(slog, getOptionValue<string>(options, "backupSelector", "random"), s_lua_record_ctx->bestwho, ret);
   return convComboAddressListToString(res);
 }
 
@@ -1338,8 +1339,18 @@ static vector<string> lua_ifurlextup(Logr::log_t slog, const vector<pair<int, op
     throw std::runtime_error("ifexturlup health check has not completed yet");
   }
 
-  // Apply backupSelector on all candidates
-  vector<ComboAddress> res = useSelector(slog, getOptionValue<string>(options, "backupSelector", "random"), s_lua_record_ctx->bestwho, candidates);
+  // Apply backupSelector on all candidates in the first non-empty group
+  vector<ComboAddress> first;
+  for (const auto& [count, unitmap] : ipurls) {
+    if (!unitmap.empty()) {
+      first.reserve(unitmap.size());
+      for (const auto& [ipStr, url] : unitmap) {
+        first.emplace_back(ipStr);
+      }
+      break;
+    }
+  }
+  vector<ComboAddress> res = useSelector(slog, getOptionValue<string>(options, "backupSelector", "random"), s_lua_record_ctx->bestwho, first);
   return convComboAddressListToString(res);
 }
 

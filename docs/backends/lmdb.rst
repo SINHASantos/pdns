@@ -122,8 +122,9 @@ Defaults to 100 on 32 bit systems, and 16000 on 64 bit systems.
 
   .. versionchanged:: 5.1.0
 
-From version 5.1.0 onwards, this settings only applies to the main database
-file; shards use :ref:`settings-lmdb-shards-map-size` instead.
+From version 5.1.0 onwards, the size of the main database and the
+size of the shard databases can be set independently.
+In order to set a different size for the shard databases, use :ref:`settings-lmdb-shards-map-size`.
 
 .. _settings-lmdb-shards-map-size:
 
